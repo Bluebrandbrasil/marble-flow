@@ -1,0 +1,79 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light dark;
+}
+
+body {
+  @apply bg-slate-50 dark:bg-[#0a0a0a] text-slate-900 dark:text-slate-100 min-h-screen font-sans antialiased;
+  /* Add a subtle mesh gradient or patterned background for light mode if desired, but sticking to solid/slate for clean look */
+}
+
+/* Glassmorphism Classes */
+@layer components {
+  .glass-panel {
+    @apply bg-white/70 dark:bg-[#121212]/80 backdrop-blur-xl border border-white/60 dark:border-white/10 shadow-xl;
+  }
+
+  .glass-card {
+    @apply bg-white/80 dark:bg-[#1a1a1a]/80 backdrop-blur-[10px] border border-slate-200/50 dark:border-white/10 shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-0.5;
+  }
+}
+
+/* Custom Animations */
+@keyframes pulse-border {
+  0% {
+    box-shadow: 0 0 0 0 rgba(225, 29, 72, 0.4);
+    border-color: rgba(225, 29, 72, 0.8);
+  }
+
+  70% {
+    box-shadow: 0 0 0 8px rgba(225, 29, 72, 0);
+    border-color: rgba(225, 29, 72, 0.2);
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 rgba(225, 29, 72, 0);
+    border-color: rgba(225, 29, 72, 0.2);
+  }
+}
+
+.animate-pulse-border {
+  animation: pulse-border 2s infinite;
+}
+
+/* @hello-pangea/dnd Ghost Placeholder */
+[data-rbd-placeholder-context-id] {
+  border: 2px dashed rgba(148, 163, 184, 0.5) !important;
+  background-color: rgba(255, 255, 255, 0.05) !important;
+  border-radius: 1rem !important;
+}
+
+.dark [data-rbd-placeholder-context-id] {
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* Smooth Scrolling */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Custom Scrollbar for premium feel */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-slate-300 dark:bg-slate-800 rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-slate-400 dark:bg-slate-700;
+}
