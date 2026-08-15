@@ -1,483 +1,577 @@
-import { safeArray } from './lib/dataDiagnostics';
-import { useState, useEffect, lazy, Suspense } from 'react';
-import { Routes, Route, useLocation, Navigate, useOutletContext, useNavigate } from 'react-router-dom';
-import { useAuth } from './context/AuthContext';
-const Login = lazy(() => import('./pages/Login').then(m => ({ default: m.Login })));
-import { Register } from './pages/Register';
-import { Dashboard } from './pages/Dashboard';
-import { SuperAdminDashboard } from './pages/SuperAdminDashboard';
-import { AcceptInvite } from './pages/AcceptInvite';
-import { WallboardPage } from './pages/WallboardPage';
-import { AlertCircle, RefreshCw } from 'lucide-react';
-import { AppUpdateBanner } from './components/ui/AppUpdateBanner';
-import { useIdleTimeout } from './hooks/useIdleTimeout';
-import { PrintContract } from './pages/PrintContract';
-import { DigitalSignature } from './pages/DigitalSignature';
-import { ManagerSignaturePage } from './pages/ManagerSignaturePage';
-import { ProtectedRoute } from './components/ProtectedRoute';
-import { DiagnosticHUD } from './components/DiagnosticHUD';
-
-// View Imports
-import { HomeView } from './features/dashboard/HomeView';
+import { useState } from 'react';
+import { Sidebar } from './layouts/Sidebar';
 import { KanbanBoard } from './features/dashboard/KanbanBoard';
+import { OrderDetails } from './features/orders/OrderDetails';
+import { OrderForm } from './features/orders/OrderForm';
+import { Modal } from './components/ui/Modal';
+import { JobClosingModal } from './features/orders/JobClosingModal';
+import type { JobClosingData } from './features/orders/JobClosingModal';
+import { ReturnRegistrationModal } from './features/orders/ReturnRegistrationModal';
+import type { ReturnRegistrationData } from './features/orders/ReturnRegistrationModal';
+import { InternalReturnModal } from './features/orders/InternalReturnModal';
+import { Button } from './components/ui/Button';
+import { Plus } from 'lucide-react';
+import { MOCK_ORDERS } from './data/mockData';
 import { ProductionCalendar } from './features/calendar/ProductionCalendar';
-import { MeasurementCalendar } from './features/calendar/MeasurementCalendar';
-import { OrdersView } from './features/orders/OrdersView';
-import { OrderPage } from './features/orders/OrderPage';
-import { QuotesView } from './features/quotes/QuotesView';
-import { DeletedQuotesView } from './features/quotes/DeletedQuotesView';
-import { QuotePage } from './features/quotes/QuotePage';
-import { ClientsView } from './features/clients/ClientsView';
 import { SettingsPage } from './features/settings/SettingsPage';
 import { ReportsView } from './features/reports/ReportsView';
-import { StaffView } from './features/staff/StaffView';
-import { InvitesView } from './features/invites/InvitesView';
-import { AccessView } from './features/access/AccessView';
-import { FinancialView } from './features/financial/FinancialView';
-import { InfluencersView } from './features/influencers/InfluencersView';
-import { MeasurerView } from './features/measurements/MeasurerView';
-import { ContractsView } from './features/contracts/ContractsView';
-import { ExecutiveDashboardView } from './features/dashboard/ExecutiveDashboardView';
-import { FollowUpView } from './features/quotes/FollowUpView';
-import { QuickSalesView } from './features/quick-sales/QuickSalesView';
-import { QuickSaleForm } from './features/quick-sales/QuickSaleForm';
-import { QuickSalePrint } from './features/quick-sales/QuickSalePrint';
+import { OrdersView } from './features/orders/OrdersView';
+import { QualityIndicator } from './components/QualityIndicator';
+import { generateBatchProductionSheet } from './lib/pdfGenerator';
+import { useSettings } from './hooks/useSettings';
+import type { Order, Status, Measurement } from './types';
+import { MeasurementCalendar } from './features/calendar/MeasurementCalendar';
+import { MeasurementForm } from './features/measurements/MeasurementForm';
+import { MeasurementDetails } from './features/measurements/MeasurementDetails';
 
-import { PlannedProjectsView } from './features/planned-projects/PlannedProjectsView';
-import { PlannedProjectPrint } from './features/planned-projects/PlannedProjectPrint';
-import { PlannedContractPrint } from './features/planned-projects/PlannedContractPrint';
-import { PlannedDigitalSignature } from './pages/PlannedDigitalSignature';
-import { ProductionHistoryView } from './features/orders/ProductionHistoryView';
-
-import { ErrorBoundary } from './components/ui/ErrorBoundary';
-import { ReactivationScreen } from './pages/ReactivationScreen';
-
-// --- View Wrappers to consume Dashboard context ---
-
-
-const HomeViewWrapper = () => {
-    const context = useOutletContext<any>() || {};
-    const { 
-        orders = [], 
-        quotes = [], 
-        incidentStats = { daysSince: 14, status: 'green', latestDate: null } 
-    } = context;
-
-    if (!import.meta.env.PROD) {
-        console.log('[HOME TRACE] orders:', orders, Array.isArray(orders));
-        console.log('[HOME TRACE] quotes:', quotes, Array.isArray(quotes));
-        console.log('[HOME TRACE] incidentStats:', incidentStats);
-    }
-
-    return (
-        <ErrorBoundary name="HomeView Component">
-            <HomeView 
-                orders={Array.isArray(orders) ? orders : []} 
-                quotes={Array.isArray(quotes) ? quotes : []} 
-                incidentStats={incidentStats}
-            />
-        </ErrorBoundary>
-    );
-};
-
-const KanbanBoardWrapper = () => {
-    const context = useOutletContext<any>() || {};
-    const { 
-        activeOrders = [], 
-        globalSearchText = '', 
-        setSelectedOrder = () => {}, 
-        handleOrderMove = () => {}, 
-        handleOrderReorder = () => {}, 
-        handlePatchOrder = () => {}, 
-        setOrderToReturn = () => {}, 
-        setIsReturnModalOpen = () => {}, 
-        generateBatchProductionSheet = () => {}, 
-        settings = {}, 
-        handleInternalReturnClick = () => {} 
-    } = context;
-
-    if (!import.meta.env.PROD) {
-        console.log('[KANBAN TRACE] activeOrders:', activeOrders, Array.isArray(activeOrders));
-    }
-
-    return (
-        <ErrorBoundary name="KanbanBoard Component">
-            <KanbanBoard
-                orders={Array.isArray(activeOrders) ? activeOrders : []}
-                globalSearchText={globalSearchText}
-                onOrderClick={setSelectedOrder}
-                onOrderMove={handleOrderMove}
-                onOrderReorder={handleOrderReorder}
-                onUpdateOrder={handlePatchOrder}
-                onOrderReturn={(order: any) => { setOrderToReturn(order); setIsReturnModalOpen(true); }}
-                onPrintColumn={(columnId: any) => {
-                    const columnOrders = (Array.isArray(activeOrders) ? activeOrders : []).filter((o: any) => o.status === columnId);
-                    generateBatchProductionSheet(columnOrders, settings);
-                }}
-                onInternalReturnClick={handleInternalReturnClick}
-            />
-        </ErrorBoundary>
-    );
-};
-
-const ProductionCalendarWrapper = () => {
-    const { setIsFullscreenMode, setIsTvMode, activeOrders, globalSearchText, setSelectedOrder, handleOrderCalendarReschedule, handleDeleteOrder, generateBatchProductionSheet, settings, handlePatchOrder } = useOutletContext<any>();
-    return (
-        <ProductionCalendar onFullscreenChange={setIsFullscreenMode} onTvModeChange={setIsTvMode}
-            orders={activeOrders}
-            globalSearchText={globalSearchText}
-            onOrderClick={setSelectedOrder}
-            onOrderReschedule={handleOrderCalendarReschedule}
-            onOrderDelete={handleDeleteOrder}
-            onOrderUpdate={handlePatchOrder}
-            onPrintColumn={(status: string) => {
-                const statusOrders = safeArray(activeOrders).filter((o: any) => o.status === status);
-                generateBatchProductionSheet(statusOrders, settings);
-            }}
-        />
-    );
-};
-
-const MeasurementCalendarWrapper = () => {
-    const { measurements, quotes, navigate, globalSearchText, setSelectedMeasurement, setPrefilledMeasurementDate, setIsAddMeasurementModalOpen, handleDeleteMeasurement, handleUpdateMeasurementDate, setIsFullscreenMode } = useOutletContext<any>();
-    return (
-        <MeasurementCalendar
-            measurements={measurements}
-            quotes={quotes}
-            navigate={navigate}
-            globalSearchText={globalSearchText}
-            onMeasurementClick={setSelectedMeasurement}
-            onAddMeasurementForDate={(date: any) => { setPrefilledMeasurementDate(date); setIsAddMeasurementModalOpen(true); }}
-            onDeleteMeasurement={handleDeleteMeasurement}
-            onUpdateMeasurementDate={handleUpdateMeasurementDate}
-            onFullscreenChange={setIsFullscreenMode}
-        />
-    );
-};
-
-const OrdersViewWrapper = () => {
-    const { orders, settings, globalSearchText } = useOutletContext<any>();
-    return <OrdersView orders={orders} settings={settings} globalSearchText={globalSearchText} />;
-};
-
-const QuotesViewWrapper = () => {
-    const { quotes, orders, measurements, contracts, handleDeleteQuote, handleUpdateQuote, handleDuplicateQuote, handleConvertQuoteToMeasurement, handleDirectSale, navigate, globalSearchText } = useOutletContext<any>();
-    return (
-        <QuotesView
-            quotes={quotes}
-            orders={orders}
-            measurements={measurements}
-            contracts={contracts}
-            isLoading={false}
-            onEdit={(quote: any) => {
-                if (typeof navigate === 'function') {
-                    navigate(`/orcamentos/${quote.id}/editar`);
-                }
-            }}
-            onDownload={(quote: any) => navigate(`/orcamentos/${quote.id}/editar?download=true`)}
-            onDelete={handleDeleteQuote}
-            onUpdateQuote={handleUpdateQuote}
-            onDuplicate={async (quote: any, isNewVersion?: boolean) => {
-                const newId = await handleDuplicateQuote(quote, isNewVersion);
-                if (newId) navigate(`/orcamentos/${newId}/editar`);
-            }}
-            onConvertToMeasurement={handleConvertQuoteToMeasurement}
-            onDirectSale={handleDirectSale}
-        />
-    );
-};
-
-const DeletedQuotesViewWrapper = () => {
-    const { deletedQuotes, handleRestoreQuote, handlePermanentDeleteQuote } = useOutletContext<any>() || {};
-    return (
-        <ErrorBoundary name="DeletedQuotesView Component">
-            <DeletedQuotesView 
-                quotes={deletedQuotes || []}
-                onRestore={handleRestoreQuote}
-                onPermanentDelete={handlePermanentDeleteQuote}
-            />
-        </ErrorBoundary>
-    );
-};
-
-const ClientsViewWrapper = () => {
-    const { navigate } = useOutletContext<any>();
-    return (
-        <ClientsView onNewQuoteFromClient={(client: any) => {
-            navigate(`/orcamentos/novo?clientId=${client.id}`, {
-                state: {
-                    prefilledQuoteData: {
-                        clientId: client.id,
-                        customerName: client.name,
-                        customerPhone: client.phone || '',
-                        customerAddress: client.address || client.street || '',
-                        status: 'draft'
-                    },
-                    preselectedClientId: client.id
-                }
-            });
-        }} />
-    );
-};
-
-const SettingsPageWrapper = () => <SettingsPage />;
-const ReportsViewWrapper = () => {
-    const { orders, measurements, incidents, incidentStats, quotes } = useOutletContext<any>();
-    return <ReportsView orders={orders} measurements={measurements} incidents={incidents} incidentStats={incidentStats} quotes={quotes} />;
-};
-const StaffViewWrapper = () => <StaffView />;
-
-
-const InvitesViewWrapper = () => <InvitesView />;
-const AccessViewWrapper = () => <AccessView />;
-import { IntegrityDashboard } from './features/admin/IntegrityDashboard';
-
-const FinancialViewWrapper = () => <FinancialView />;
-const InfluencersViewWrapper = () => <InfluencersView />;
-const MeasurerViewWrapper = () => <MeasurerView />;
-const ContractsViewWrapper = () => <ContractsView />;
-import { CommercialIntelligenceView } from './features/intelligence/CommercialIntelligenceView';
-const CommercialIntelligenceViewWrapper = () => <CommercialIntelligenceView />;
-const FollowUpViewWrapper = () => <FollowUpView />;
-
-const QuickSalesViewWrapper = () => (
-    <ErrorBoundary name="QuickSalesView Component">
-        <QuickSalesView />
-    </ErrorBoundary>
-);
-
-const QuickSaleFormWrapper = () => (
-    <ErrorBoundary name="QuickSaleForm Component">
-        <QuickSaleForm />
-    </ErrorBoundary>
-);
-
-const ProductionHistoryViewWrapper = () => (
-    <ErrorBoundary name="ProductionHistoryView Component">
-        <ProductionHistoryView />
-    </ErrorBoundary>
-);
-
-const QuickSalePrintWrapper = () => (
-    <ErrorBoundary name="QuickSalePrint Component">
-        <QuickSalePrint />
-    </ErrorBoundary>
-);
-
-const PlannedProjectsViewWrapper = () => (
-    <ErrorBoundary name="PlannedProjectsView Component">
-        <PlannedProjectsView />
-    </ErrorBoundary>
-);
-
-const PlannedProjectPrintWrapper = () => (
-    <ErrorBoundary name="PlannedProjectPrint Component">
-        <PlannedProjectPrint />
-    </ErrorBoundary>
-);
-
-const PlannedContractPrintWrapper = () => (
-    <ErrorBoundary name="PlannedContractPrint Component">
-        <PlannedContractPrint />
-    </ErrorBoundary>
-);
-
-import { StoreVisitsView } from './features/store-visits/StoreVisitsView';
-const StoreVisitsViewWrapper = () => (
-    <ErrorBoundary name="StoreVisitsView Component">
-        <StoreVisitsView />
-    </ErrorBoundary>
-);
-
-// --- Main App Component ---
+type ViewType = 'dashboard' | 'orders' | 'settings' | 'calendar' | 'reports' | 'measurements';
 
 function App() {
-  const { user, profile, loading: authLoading, logout } = useAuth();
-  const navigate = useNavigate();
-  const location = useLocation();
+  const [orders, setOrders] = useState<Order[]>(MOCK_ORDERS);
+  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [prefilledDate, setPrefilledDate] = useState<Date | null>(null);
+  // Extend prefilled data to include startDate to carry the scheduledDate over from measurement
+  const [prefilledOrderData, setPrefilledOrderData] = useState<(Partial<Order> & { startDate?: string }) | null>(null);
+  const [activeView, setActiveView] = useState<ViewType>('dashboard');
+  const [globalSearchText, setGlobalSearchText] = useState('');
+  const { settings } = useSettings();
 
-  // Session Inactivity Timeout (30 minutes)
-  useIdleTimeout({
-    onIdle: () => {
-      console.warn("Session expired due to inactivity. Logging out.");
-      logout();
-    },
-    isActive: !!user // Only monitor if user is logged in
+  // Measurement State
+  const [measurements, setMeasurements] = useState<Measurement[]>([]);
+  const [selectedMeasurement, setSelectedMeasurement] = useState<Measurement | null>(null);
+  const [isAddMeasurementModalOpen, setIsAddMeasurementModalOpen] = useState(false);
+  const [prefilledMeasurementDate, setPrefilledMeasurementDate] = useState<Date | null>(null);
+
+  // Quality Indicator State - Default to 10 days to show the celebration state
+  const [qualityScore, setQualityScore] = useState<number>(() => {
+    const saved = localStorage.getItem('marble_flow_quality_score');
+    return saved ? parseInt(saved, 10) : 10;
   });
 
-  const [authTimeout, setAuthTimeout] = useState(false);
+  const resetQualityScore = () => {
+    setQualityScore(0);
+    localStorage.setItem('marble_flow_quality_score', '0');
+  };
 
-  useEffect(() => {
-    let timeoutId: NodeJS.Timeout;
-    if (authLoading) {
-      timeoutId = setTimeout(() => {
-        setAuthTimeout(true);
-      }, 10000);
+  const incrementQualityScore = () => {
+    setQualityScore(prev => {
+      const newVal = prev + 1;
+      localStorage.setItem('marble_flow_quality_score', newVal.toString());
+      return newVal;
+    });
+  };
+
+  const handleAddOrder = (orderData: any, measurementId?: string) => {
+    // Find the measurement to duplicate its attachments
+    const measurementToConvert = measurements.find(m => m.id === measurementId);
+
+    const newOrder: Order = {
+      ...orderData,
+      id: Math.random().toString(36).substring(7),
+      status: 'production_queue',
+      createdAt: new Date().toISOString(),
+      attachments: measurementToConvert?.attachments || [] // <--- Migrating Attachments
+    };
+
+    setOrders([newOrder, ...orders]);
+    setIsAddModalOpen(false);
+    setPrefilledDate(null);
+  };
+
+  const handleAddOrderForDate = (date: Date) => {
+    setPrefilledDate(date);
+    setPrefilledOrderData(null);
+    setIsAddModalOpen(true);
+  };
+
+  // Measurement Handlers
+  const handleAddMeasurement = (data: Omit<Measurement, 'id' | 'createdAt' | 'status'>) => {
+    const newMeasurement: Measurement = {
+      ...data,
+      id: Date.now().toString(),
+      status: 'scheduled',
+      createdAt: new Date().toISOString()
+    };
+    setMeasurements([...measurements, newMeasurement]);
+    setIsAddMeasurementModalOpen(false);
+    setPrefilledMeasurementDate(null);
+  };
+
+  const handleUpdateMeasurementDate = (id: string, newDateString: string) => {
+    setMeasurements(measurements.map(m => m.id === id ? { ...m, scheduledDate: newDateString } : m));
+  };
+
+  const handleDeleteMeasurement = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setMeasurements(measurements.filter(m => m.id !== id));
+    if (selectedMeasurement?.id === id) {
+      setSelectedMeasurement(null);
     }
-    return () => clearTimeout(timeoutId);
-  }, [authLoading]);
+  };
 
-  if (authLoading) {
-    if (authTimeout) {
-      return (
-        <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6 text-center">
-          <div className="glass-card p-8 rounded-3xl border border-white/10 max-w-sm flex flex-col items-center">
-            <AlertCircle className="w-12 h-12 text-amber-500 mb-4" />
-            <h2 className="text-xl font-bold text-white mb-2">Conexão Lenta</h2>
-            <p className="text-slate-400 text-sm mb-6">A inicialização está demorando. Por favor, recarregue a página para forçar uma nova tentativa.</p>
-            <button onClick={() => window.location.reload()} className="flex items-center justify-center gap-2 bg-brand-emerald text-slate-900 w-full h-12 rounded-xl font-bold hover:bg-brand-neon transition-colors">
-              <RefreshCw className="w-5 h-5" /> Recarregar
-            </button>
-          </div>
-        </div>
-      );
+  const handleConvertToOrder = (measurement: Measurement) => {
+    setPrefilledOrderData({
+      customerName: measurement.customerName,
+      phone: measurement.phone,
+      address: measurement.address,
+      material: measurement.material,
+      observations: `Origem: Medição Téc.\n${measurement.observations}`,
+      // Pass geographical data and prefill startDate with the measurement's scheduled date
+      ...(measurement.city ? { city: measurement.city } : {}),
+      ...(measurement.region ? { region: measurement.region } : {}),
+      startDate: measurement.scheduledDate || new Date().toISOString().split('T')[0],
+    });
+
+    // Mark as completed so it counts for conversion, but keep it on its scheduledDate
+    setMeasurements(measurements.map(m => m.id === measurement.id ? { ...m, status: 'completed' } : m));
+    setSelectedMeasurement(null);
+    setIsAddModalOpen(true);
+  };
+
+  const handleDeclineMeasurement = (measurement: Measurement, reason: string) => {
+    setMeasurements(measurements.map(m =>
+      m.id === measurement.id ? { ...m, status: 'declined', declineReason: reason } : m
+    ));
+    setSelectedMeasurement(null);
+  };
+
+  const [isClosingModalOpen, setIsClosingModalOpen] = useState(false);
+  const [orderToClose, setOrderToClose] = useState<Order | null>(null);
+
+  const [isReturnModalOpen, setIsReturnModalOpen] = useState(false);
+  const [orderToReturn, setOrderToReturn] = useState<Order | null>(null);
+
+  const [isInternalReturnModalOpen, setIsInternalReturnModalOpen] = useState(false);
+  const [orderToInternalReturn, setOrderToInternalReturn] = useState<Order | null>(null);
+  const [internalReturnItem, setInternalReturnItem] = useState<'Base' | 'Frontão' | 'Cuba'>('Base');
+
+  const handleUpdateOrder = (updatedOrder: Order) => {
+    setOrders(orders.map(order => order.id === updatedOrder.id ? updatedOrder : order));
+    if (selectedOrder?.id === updatedOrder.id) {
+      setSelectedOrder(updatedOrder);
     }
-    return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-        <div className="text-white flex flex-col items-center gap-4">
-          <div className="w-12 h-12 border-4 border-brand-emerald border-t-transparent rounded-full animate-spin"></div>
-          <p className="text-slate-400 font-medium">Carregando portal...</p>
-        </div>
-      </div>
+  };
+
+  const handlePatchOrder = (orderId: string, updates: Partial<Order>) => {
+    setOrders(orders.map(o => o.id === orderId ? { ...o, ...updates } : o));
+    if (selectedOrder?.id === orderId) {
+      setSelectedOrder(prev => prev ? { ...prev, ...updates } : null);
+    }
+  };
+
+  const handleOrderReorder = (status: Status, startIndex: number, endIndex: number) => {
+    const statusOrders = orders.filter(o => o.status === status);
+    const otherOrders = orders.filter(o => o.status !== status);
+
+    const [removed] = statusOrders.splice(startIndex, 1);
+    statusOrders.splice(endIndex, 0, removed);
+
+    // Keep the status orders at the beginning and the rest after, 
+    // it's a simple way to persist order without adding an 'orderIndex' field.
+    setOrders([...statusOrders, ...otherOrders]);
+  };
+
+  const handleOrderMove = (orderId: string, newStatus: Status, newIndex?: number) => {
+    if (newStatus === 'finished') {
+      const order = orders.find(o => o.id === orderId);
+      if (order) {
+        setOrderToClose(order);
+        setIsClosingModalOpen(true);
+      }
+      return; // Do not move immediately
+    }
+
+    const orderToMove = orders.find(o => o.id === orderId);
+    if (!orderToMove) return;
+
+    const remainingOrders = orders.filter(o => o.id !== orderId);
+    const updatedOrder = { ...orderToMove, status: newStatus };
+
+    if (newIndex !== undefined) {
+      const destColumnOrders = remainingOrders.filter(o => o.status === newStatus);
+      const otherColumnOrders = remainingOrders.filter(o => o.status !== newStatus);
+
+      destColumnOrders.splice(newIndex, 0, updatedOrder);
+      setOrders([...destColumnOrders, ...otherColumnOrders]);
+    } else {
+      setOrders([...remainingOrders, updatedOrder]);
+    }
+  };
+
+  const handleCloseJob = (data: JobClosingData) => {
+    if (!orderToClose) return;
+
+    const isReturn = data.completionStatus === 'return';
+    const newStatus: Status = isReturn ? 'production_queue' : 'finished';
+
+    let updatedOrders = orders.map(order => {
+      if (order.id === orderToClose.id) {
+        return {
+          ...order,
+          status: newStatus,
+          installerName: data.installerName,
+          completionStatus: data.completionStatus,
+          returnReasons: isReturn ? [...data.returnReasons, data.otherReason].filter(Boolean) : undefined,
+          completionDate: new Date().toISOString(),
+          isReturn: isReturn,
+          priority: isReturn ? 'high' : order.priority // High priority if return
+        };
+      }
+      return order;
+    });
+
+    // If return, move to top of queue and reset quality indicator
+    if (isReturn) {
+      resetQualityScore();
+      const returnedOrder = updatedOrders.find(o => o.id === orderToClose.id);
+      const otherOrders = updatedOrders.filter(o => o.id !== orderToClose.id);
+      if (returnedOrder) {
+        updatedOrders = [returnedOrder, ...otherOrders];
+      }
+    }
+
+    setOrders(updatedOrders);
+    setIsClosingModalOpen(false);
+    setOrderToClose(null);
+  };
+
+  const handleConfirmReturn = (data: ReturnRegistrationData) => {
+    if (!orderToReturn) return;
+
+    let updatedOrders = orders.map(order =>
+      order.id === orderToReturn.id
+        ? {
+          ...order,
+          status: 'production_queue' as Status,
+          isReturn: true,
+          priority: 'high' as const,
+          deadline: new Date(data.newDeadline).toISOString(),
+          returnReasons: [...data.returnReasons, data.otherReason].filter(Boolean),
+          returnObservations: data.returnObservations
+        }
+        : order
     );
-  }
 
-  // Handle invitation link without layout
-  if (location.pathname === '/accept-invite') {
-    return <AcceptInvite />;
-  }
+    // Move returned order to top
+    resetQualityScore();
+    const returnedOrder = updatedOrders.find(o => o.id === orderToReturn.id);
+    const otherOrders = updatedOrders.filter(o => o.id !== orderToReturn.id);
+    if (returnedOrder) {
+      updatedOrders = [returnedOrder, ...otherOrders];
+    }
 
-  // 1. GATEWAY: Public Sign Routes
-  if (location.pathname.startsWith('/sign/') || location.pathname.startsWith('/planejados/assinar/')) {
-    return (
-      <Routes>
-        <Route path="/sign/:token" element={<DigitalSignature />} />
-        <Route path="/planejados/assinar/:token" element={<PlannedDigitalSignature />} />
-      </Routes>
+    setOrders(updatedOrders);
+    setIsReturnModalOpen(false);
+    setOrderToReturn(null);
+  };
+
+  const handleConfirmInternalReturn = (itemToRemake: 'Base' | 'Frontão' | 'Cuba', reason: string, newDate: string) => {
+    if (!orderToInternalReturn) return;
+
+    let updatedOrders = orders.map(order =>
+      order.id === orderToInternalReturn.id
+        ? {
+          ...order,
+          status: 'production_queue' as Status,
+          isInternalReturn: true,
+          priority: 'high' as const,
+          deadline: new Date(newDate).toISOString(),
+          remakeItem: itemToRemake,
+          remakeReason: reason,
+          remakeDate: new Date().toISOString()
+        }
+        : order
     );
-  }
 
-  // 2. COMPATIBILITY: Redirect old contract links to the new Gateway
-  const queryParams = new URLSearchParams(location.search);
-  const oldToken = queryParams.get('token');
-  if (location.pathname.includes('/contract') && oldToken) {
-    return <Navigate to={`/sign/${oldToken}`} replace />;
-  }
-  
-  if (!user) {
-    return (
-      <Suspense fallback={
-        <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6 text-center">
-            <div className="text-white flex flex-col items-center gap-4">
-              <div className="w-8 h-8 border-4 border-brand-emerald border-t-transparent rounded-full animate-spin"></div>
-            </div>
-        </div>
-      }>
-        <Routes>
-            <Route path="/login" element={<Login onNavigateToRegister={() => navigate('/cadastro')} />} />
-            <Route path="/cadastro" element={<Register onNavigateToLogin={() => navigate('/login')} />} />
-            <Route path="/manager-signature/:token" element={<ManagerSignaturePage />} />
-            <Route path="*" element={<Navigate to="/login" replace />} />
-        </Routes>
-      </Suspense>
-    );
-  }
+    // Urgent internal returns go straight to the top of the production queue
+    resetQualityScore();
+    const returnedOrder = updatedOrders.find(o => o.id === orderToInternalReturn.id);
+    const otherOrders = updatedOrders.filter(o => o.id !== orderToInternalReturn.id);
+    if (returnedOrder) {
+      updatedOrders = [returnedOrder, ...otherOrders];
+    }
 
-  // Guard Logic for status
-  if (profile?.status !== 'approved' && profile?.role !== 'superadmin') {
-    return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6 text-center">
-        <div className="glass-card p-8 rounded-3xl border border-amber-500/20 max-w-sm">
-          <AlertCircle className="w-12 h-12 text-amber-500 mx-auto mb-4" />
-          <h2 className="text-xl font-bold text-white mb-2">Conta Aguardando Liberação</h2>
-          <p className="text-slate-400 text-sm">O status do seu usuário não está aprovado (Atual: {profile?.status}).</p>
-        </div>
-      </div>
-    );
-  }
+    setOrders(updatedOrders);
+    setIsInternalReturnModalOpen(false);
+    setOrderToInternalReturn(null);
+    setSelectedOrder(null); // Close order details modal
+  };
 
-  if (((profile?.company as any)?.status === 'deleted' || (profile?.company as any)?.isDeleted) && profile?.role !== 'superadmin') {
-    return <ReactivationScreen />;
-  }
+  const handleOrderReschedule = (orderId: string, newDateString: string) => {
+    // Parse the dropped date string back to Date object, keep existing time if possible, or just set to noon to be safe
+    const [year, month, day] = newDateString.split('T')[0].split('-');
+    const newDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day), 12, 0, 0);
 
-  if (profile?.company?.status !== 'approved' && profile?.role !== 'superadmin') {
-    return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6 text-center">
-        <div className="glass-card p-8 rounded-3xl border border-red-500/20 max-w-sm">
-          <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
-          <h2 className="text-xl font-bold text-white mb-2">Acesso Restrito</h2>
-          <p className="text-slate-400 text-sm">Sua empresa não está aprovada (Atual: {profile?.company?.status}). Contate o suporte.</p>
-        </div>
-      </div>
-    );
-  }
+    setOrders(orders.map(order =>
+      order.id === orderId
+        ? { ...order, deadline: newDate.toISOString() }
+        : order
+    ));
+  };
 
-  // Handle SuperAdmin special route or redirect
-  if (profile?.role === 'superadmin' && profile?.companyId === 'system') {
-    return (
-      <Routes>
-        <Route path="/superadmin" element={<SuperAdminDashboard />} />
-        <Route path="/order/:orderId/contract" element={<PrintContract />} />
-        <Route path="/assinatura/:token" element={<DigitalSignature />} />
-        <Route path="/planejados/assinar/:token" element={<PlannedDigitalSignature />} />
-        <Route path="/imprimir-contrato/:token" element={<PrintContract />} />
-        <Route path="*" element={<Navigate to="/superadmin" replace />} />
-      </Routes>
-    );
-  }
+  const handleDeleteOrder = (orderId: string) => {
+    setOrders(orders.filter(order => order.id !== orderId));
+    if (selectedOrder?.id === orderId) {
+      setSelectedOrder(null);
+    }
+  };
 
+  const handleCompleteConference = (orderToComplete: Order) => {
+    setOrders(orders.map(order =>
+      order.id === orderToComplete.id
+        ? { ...order, status: 'installation' }
+        : order
+    ));
+    incrementQualityScore();
+    setSelectedOrder(null);
+  };
+
+  const handleInternalReturnClick = (order: Order) => {
+    setOrderToInternalReturn(order);
+    setInternalReturnItem('Base');
+    setIsInternalReturnModalOpen(true);
+  };
+
+  // Archive rule: Hide finished orders older than 30 days
+  const activeOrders = orders.filter(order => {
+    if (order.status !== 'finished') return true;
+    const daysSinceDeadline = (new Date().getTime() - new Date(order.deadline).getTime()) / (1000 * 3600 * 24);
+    return daysSinceDeadline <= 30;
+  });
 
   return (
-    <>
-      <Routes>
-        <Route element={<Dashboard />}>
-            <Route path="/inicio" element={<ProtectedRoute viewId="home"><HomeViewWrapper /></ProtectedRoute>} />
-            <Route path="/producao/ordens" element={<ProtectedRoute viewId="dashboard"><KanbanBoardWrapper /></ProtectedRoute>} />
-            <Route path="/calendario" element={<ProtectedRoute viewId="calendar">{profile?.role === 'medidor' ? <Navigate to="/medicoes" replace /> : <ProductionCalendarWrapper />}</ProtectedRoute>} />
-            <Route path="/medicoes" element={<ProtectedRoute viewId="measurements"><MeasurementCalendarWrapper /></ProtectedRoute>} />
-            <Route path="/orcamentos" element={<ProtectedRoute viewId="quotes"><QuotesViewWrapper /></ProtectedRoute>} />
-            <Route path="/orcamentos/lixeira" element={<ProtectedRoute viewId="quotes"><DeletedQuotesViewWrapper /></ProtectedRoute>} />
-            <Route path="/orcamentos/novo" element={<ProtectedRoute viewId="quotes"><QuotePage /></ProtectedRoute>} />
-            <Route path="/orcamentos/:id/editar" element={<ProtectedRoute viewId="quotes"><QuotePage /></ProtectedRoute>} />
-            <Route path="/follow-up" element={<ProtectedRoute viewId="quotes"><FollowUpViewWrapper /></ProtectedRoute>} />
-            <Route path="/visitas" element={<ProtectedRoute viewId="store_visits"><StoreVisitsViewWrapper /></ProtectedRoute>} />
-            <Route path="/pedidos/novo" element={<ProtectedRoute viewId="orders"><OrderPage /></ProtectedRoute>} />
-            <Route path="/pedidos/:id/editar" element={<ProtectedRoute viewId="orders"><OrderPage /></ProtectedRoute>} />
-            <Route path="/clientes" element={<ProtectedRoute viewId="clients"><ClientsViewWrapper /></ProtectedRoute>} />
-            <Route path="/producao/todas" element={<ProtectedRoute viewId="orders"><OrdersViewWrapper /></ProtectedRoute>} />
-            <Route path="/producao/historico" element={<ProtectedRoute viewId="orders"><ProductionHistoryViewWrapper /></ProtectedRoute>} />
-            <Route path="/financeiro" element={<ProtectedRoute viewId="financial"><FinancialViewWrapper /></ProtectedRoute>} />
-            <Route path="/influenciadores" element={<ProtectedRoute viewId="influencers"><InfluencersViewWrapper /></ProtectedRoute>} />
-            <Route path="/equipe" element={<ProtectedRoute viewId="staff"><StaffViewWrapper /></ProtectedRoute>} />
-            <Route path="/inteligencia-comercial" element={<ProtectedRoute viewId="intelligence"><CommercialIntelligenceViewWrapper /></ProtectedRoute>} />
-            <Route path="/convites" element={<ProtectedRoute viewId="invites"><InvitesViewWrapper /></ProtectedRoute>} />
-            <Route path="/acesso" element={<ProtectedRoute viewId="access"><AccessViewWrapper /></ProtectedRoute>} />
-            <Route path="/relatorios" element={<ProtectedRoute viewId="reports"><ReportsViewWrapper /></ProtectedRoute>} />
-            <Route path="/configuracoes" element={<ProtectedRoute viewId="settings"><SettingsPageWrapper /></ProtectedRoute>} />
-            <Route path="/medicoes/hoje" element={<ProtectedRoute viewId="medicoes_hoje"><MeasurerViewWrapper /></ProtectedRoute>} />
-            <Route path="/contratos" element={<ProtectedRoute viewId="contracts"><ContractsViewWrapper /></ProtectedRoute>} />
-            <Route path="/vendas-rapidas" element={<ProtectedRoute viewId="quick_sales"><QuickSalesViewWrapper /></ProtectedRoute>} />
-            <Route path="/vendas-rapidas/nova" element={<ProtectedRoute viewId="quick_sales"><QuickSaleFormWrapper /></ProtectedRoute>} />
-            <Route path="/vendas-rapidas/:id/editar" element={<ProtectedRoute viewId="quick_sales"><QuickSaleFormWrapper /></ProtectedRoute>} />
-            <Route path="/planejados" element={<ProtectedRoute viewId="planned_projects"><PlannedProjectsViewWrapper /></ProtectedRoute>} />
-            <Route path="/admin/integrity" element={<ProtectedRoute viewId="integrity"><IntegrityDashboard /></ProtectedRoute>} />
-            <Route path="/executivo" element={<ProtectedRoute viewId="executive"><ExecutiveDashboardView /></ProtectedRoute>} />
-            
-            {/* Redirect fallback inside the private app */}
-            <Route path="/" element={<Navigate to={profile?.role === 'medidor' ? "/medicoes/hoje" : "/inicio"} replace />} />
-        </Route>
-        
-        <Route path="/order/:orderId/contract" element={<PrintContract />} />
-        <Route path="/vendas-rapidas/:id/imprimir" element={<QuickSalePrintWrapper />} />
-        <Route path="/telao" element={<ProtectedRoute viewId="executive"><WallboardPage /></ProtectedRoute>} />
-        <Route path="/planejados/:id/imprimir" element={<ProtectedRoute viewId="planned_projects"><PlannedProjectPrintWrapper /></ProtectedRoute>} />
-        <Route path="/planejados/:id/contrato" element={<ProtectedRoute viewId="planned_projects"><PlannedContractPrintWrapper /></ProtectedRoute>} />
-        <Route path="/manager-signature/:token" element={<ManagerSignaturePage />} />
-        <Route path="*" element={<Navigate to={profile?.role === 'medidor' ? "/medicoes/hoje" : "/inicio"} replace />} />
-      </Routes>
-      <AppUpdateBanner />
-      <DiagnosticHUD />
-    </>
+    <div className="flex min-h-screen font-sans">
+      <Sidebar activeView={activeView} onViewChange={setActiveView} />
+      <main className="flex-1 md:ml-[72px] p-8 overflow-hidden h-screen flex flex-col transition-all duration-300">
+        <header className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6 lg:mb-8 shrink-0">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-50">
+              {activeView === 'dashboard' && 'Produção'}
+              {activeView === 'calendar' && 'Calendário de Produção'}
+              {activeView === 'measurements' && 'Calendário de Medições'}
+              {activeView === 'orders' && 'Todas as Ordens'}
+              {activeView === 'settings' && 'Configurações'}
+              {activeView === 'reports' && 'Relatórios'}
+            </h1>
+            <p className="text-slate-500 dark:text-slate-400 mt-1">
+              {activeView === 'dashboard' && 'Gerencie a fila de produção da marmoraria.'}
+              {activeView === 'calendar' && 'Visualize as entregas previstas.'}
+              {activeView === 'measurements' && 'Agende e converta medições em ordens de serviço.'}
+              {activeView === 'orders' && 'Visualize o histórico completo de pedidos.'}
+              {activeView === 'settings' && 'Ajustes do sistema.'}
+              {activeView === 'reports' && 'Métricas e histórico.'}
+            </p>
+          </div>
+          <div className="flex items-center gap-4 w-full lg:w-auto">
+            {activeView !== 'settings' && activeView !== 'reports' && (
+              <div className="relative flex-1 md:w-64 max-w-sm">
+                <input
+                  type="text"
+                  placeholder="Pesquisar cliente..."
+                  className="w-full pl-10 pr-4 py-2 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-slate-950 dark:focus:ring-white"
+                  value={globalSearchText}
+                  onChange={(e) => setGlobalSearchText(e.target.value)}
+                />
+                <svg
+                  className="absolute left-3 top-2.5 h-4 w-4 text-slate-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+              </div>
+            )}
+
+            {activeView === 'measurements' && (
+              <Button onClick={() => setIsAddMeasurementModalOpen(true)}>
+                <Plus className="hidden sm:inline-block mr-2 h-4 w-4" />
+                <span className="max-sm:hidden">Nova Medição</span>
+                <span className="sm:hidden"><Plus className="h-4 w-4" /></span>
+              </Button>
+            )}
+            {(activeView === 'dashboard' || activeView === 'calendar') && (
+              <>
+                <div className="hidden lg:block shrink-0">
+                  <QualityIndicator qualityScore={qualityScore} />
+                </div>
+                <Button onClick={() => {
+                  setPrefilledOrderData(null);
+                  setIsAddModalOpen(true);
+                }} className="shrink-0">
+                  <Plus className="hidden sm:inline-block mr-2 h-4 w-4" />
+                  <span className="max-sm:hidden">Nova Ordem</span>
+                  <span className="sm:hidden"><Plus className="h-4 w-4" /></span>
+                </Button>
+              </>
+            )}
+          </div>
+        </header>
+
+        <div className="flex-1 overflow-hidden">
+          {activeView === 'dashboard' && (
+            <KanbanBoard
+              orders={activeOrders}
+              globalSearchText={globalSearchText}
+              onOrderClick={setSelectedOrder}
+              onOrderMove={handleOrderMove}
+              onOrderReorder={handleOrderReorder}
+              onUpdateOrder={handlePatchOrder}
+              onOrderReturn={(order) => {
+                setOrderToReturn(order);
+                setIsReturnModalOpen(true);
+              }}
+              onPrintColumn={(columnId) => {
+                const columnOrders = orders.filter(o => o.status === columnId);
+                generateBatchProductionSheet(columnOrders, settings);
+              }}
+              onInternalReturnClick={(order) => {
+                setOrderToInternalReturn(order);
+                setInternalReturnItem('Base');
+                setIsInternalReturnModalOpen(true);
+              }}
+            />
+          )}
+
+          {activeView === 'calendar' && (
+            <ProductionCalendar
+              orders={activeOrders}
+              globalSearchText={globalSearchText}
+              onOrderClick={setSelectedOrder}
+              onOrderReschedule={handleOrderReschedule}
+              onOrderDelete={handleDeleteOrder}
+              onAddOrderForDate={handleAddOrderForDate}
+            />
+          )}
+
+          {activeView === 'measurements' && (
+            <MeasurementCalendar
+              measurements={measurements}
+              globalSearchText={globalSearchText}
+              onMeasurementClick={setSelectedMeasurement}
+              onAddMeasurementForDate={(date: Date) => {
+                setPrefilledMeasurementDate(date);
+                setIsAddMeasurementModalOpen(true);
+              }}
+              onDeleteMeasurement={handleDeleteMeasurement}
+              onUpdateMeasurementDate={handleUpdateMeasurementDate}
+            />
+          )}
+
+          {activeView === 'orders' && (
+            <OrdersView orders={orders} settings={settings} globalSearchText={globalSearchText} />
+          )}
+
+          {activeView === 'settings' && (
+            <SettingsPage />
+          )}
+
+          {activeView === 'reports' && (
+            <ReportsView orders={orders} measurements={measurements} />
+          )}
+        </div>
+
+        {/* Order Details Modal */}
+        <Modal
+          isOpen={!!selectedOrder}
+          onClose={() => setSelectedOrder(null)}
+          title={selectedOrder ? `Pedido #${selectedOrder.protocolNumber}` : 'Detalhes'}
+          className="max-w-4xl"
+        >
+          {selectedOrder && (
+            <OrderDetails
+              order={selectedOrder}
+              onUpdateOrder={handleUpdateOrder}
+              onCompleteConference={handleCompleteConference}
+              onInternalReturnClick={handleInternalReturnClick}
+            />
+          )}
+        </Modal>
+
+        {/* Add Order Modal */}
+        <Modal
+          isOpen={isAddModalOpen}
+          onClose={() => {
+            setIsAddModalOpen(false);
+            setPrefilledDate(null);
+            setPrefilledOrderData(null);
+          }}
+          title="Nova Ordem de Serviço"
+        >
+          <OrderForm
+            onSubmit={handleAddOrder}
+            onCancel={() => {
+              setIsAddModalOpen(false);
+              setPrefilledDate(null);
+              setPrefilledOrderData(null);
+            }}
+            initialDeadline={prefilledDate || undefined}
+            initialData={prefilledOrderData || undefined}
+          />
+        </Modal>
+
+        {/* Measurement Modals */}
+        <Modal
+          isOpen={!!selectedMeasurement}
+          onClose={() => setSelectedMeasurement(null)}
+          title="Detalhes da Medição"
+        >
+          {selectedMeasurement && (
+            <MeasurementDetails
+              measurement={selectedMeasurement}
+              onClose={() => setSelectedMeasurement(null)}
+              onConvertToOrder={handleConvertToOrder}
+              onDecline={handleDeclineMeasurement}
+              onDelete={() => {
+                setMeasurements(measurements.filter(m => m.id !== selectedMeasurement.id));
+                setSelectedMeasurement(null);
+              }}
+            />
+          )}
+        </Modal>
+
+        <Modal
+          isOpen={isAddMeasurementModalOpen}
+          onClose={() => {
+            setIsAddMeasurementModalOpen(false);
+            setPrefilledMeasurementDate(null);
+          }}
+          title="Nova Medição"
+        >
+          <MeasurementForm
+            onSubmit={handleAddMeasurement}
+            initialDate={prefilledMeasurementDate || undefined}
+          />
+        </Modal>
+
+        {/* Job Closing Modal */}
+        <JobClosingModal
+          isOpen={isClosingModalOpen}
+          onClose={() => setIsClosingModalOpen(false)}
+          onConfirm={handleCloseJob}
+          orderId={orderToClose?.id || ''}
+        />
+
+        {/* Return Registration Modal */}
+        <ReturnRegistrationModal
+          isOpen={isReturnModalOpen}
+          onClose={() => setIsReturnModalOpen(false)}
+          onConfirm={handleConfirmReturn}
+          orderId={orderToReturn?.id || ''}
+        />
+
+        {/* Internal Return (Avaria) Modal */}
+        <InternalReturnModal
+          isOpen={isInternalReturnModalOpen}
+          onClose={() => setIsInternalReturnModalOpen(false)}
+          onConfirm={handleConfirmInternalReturn}
+          initialItem={internalReturnItem}
+        />
+
+      </main>
+    </div >
   );
 }
 

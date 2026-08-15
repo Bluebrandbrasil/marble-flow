@@ -1,67 +1,43 @@
 import { useState, useEffect } from 'react';
 import type { SinkModel } from '../types';
-import { db } from '../lib/firebase';
-import { collection, query, where, onSnapshot, addDoc, deleteDoc, doc, updateDoc } from 'firebase/firestore';
-import { toISODateSafe } from '../lib/dateWriteUtils';
-import { useAuth } from '../context/AuthContext';
+
+const STORAGE_KEY = 'marble-flow-sinks';
+
+const DEFAULT_SINKS: SinkModel[] = [
+    {
+        id: '1',
+        name: 'Cuba Esculpida',
+        photoUrl: '' // Placeholder or default
+    },
+    {
+        id: '2',
+        name: 'Cuba Inox Tramontina',
+        photoUrl: ''
+    }
+];
 
 export function useSinkCatalog() {
-    const { profile } = useAuth();
-    const [sinks, setSinks] = useState<SinkModel[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
+    const [sinks, setSinks] = useState<SinkModel[]>(() => {
+        const saved = localStorage.getItem(STORAGE_KEY);
+        return saved ? JSON.parse(saved) : DEFAULT_SINKS;
+    });
 
     useEffect(() => {
-        if (!profile?.companyId) {
-            setSinks([]);
-            setIsLoading(false);
-            return;
-        }
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(sinks));
+    }, [sinks]);
 
-        const q = query(collection(db, 'sinks'), where('companyId', '==', profile.companyId));
-
-        const unsubscribe = onSnapshot(q, (snapshot) => {
-            const loaded: SinkModel[] = [];
-            snapshot.forEach((doc) => {
-                const data = doc.data();
-                loaded.push({ 
-                    id: doc.id, 
-                    ...data
-                } as SinkModel);
-            });
-            setSinks(loaded);
-            setIsLoading(false);
-        }, (error) => {
-            console.error("Error loading sinks:", error);
-            setIsLoading(false);
-        });
-
-        return () => unsubscribe();
-    }, [profile?.companyId]);
-
-    const addSink = async (sink: Omit<SinkModel, 'id'>) => {
-        if (!profile?.companyId) throw new Error("User company not found");
-
-        await addDoc(collection(db, 'sinks'), {
-            ...sink,
-            companyId: profile.companyId,
-            userId: profile.uid,
-            createdAt: toISODateSafe(new Date())!
-        });
+    const addSink = (sink: Omit<SinkModel, 'id'>) => {
+        const newSink = { ...sink, id: Date.now().toString() };
+        setSinks(prev => [...prev, newSink]);
     };
 
-    const updateSink = async (id: string, data: Partial<SinkModel>) => {
-        if (!profile?.companyId) throw new Error("User company not found");
-
-        const docRef = doc(db, 'sinks', id);
-        await updateDoc(docRef, data);
+    const removeSink = (id: string) => {
+        setSinks(prev => prev.filter(s => s.id !== id));
     };
 
-    const removeSink = async (id: string) => {
-        if (!profile?.companyId) throw new Error("User company not found");
-        
-        const docRef = doc(db, 'sinks', id);
-        await deleteDoc(docRef);
+    const updateSink = (id: string, updates: Partial<SinkModel>) => {
+        setSinks(prev => prev.map(s => s.id === id ? { ...s, ...updates } : s));
     };
 
-    return { sinks, isLoading, addSink, updateSink, removeSink };
+    return { sinks, addSink, removeSink, updateSink };
 }

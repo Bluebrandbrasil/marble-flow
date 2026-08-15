@@ -1,11 +1,7 @@
-import { safeArray } from '../../lib/dataDiagnostics';
 import React, { useRef, useState } from 'react';
-import { X, UploadCloud, FileText, Trash2, Loader2 } from 'lucide-react';
+import { X, UploadCloud, FileText, Trash2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { Card } from './Card';
-import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
-import { storage } from '../../lib/firebase';
-import { useAuth } from '../../context/AuthContext';
 
 interface FileUploadModalProps {
     isOpen: boolean;
@@ -26,85 +22,26 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
     title = "Anexar Arquivos Técnicos",
     description = "Imagens da obra, projetos em PDF ou rascunhos de medidas."
 }) => {
-    const { profile } = useAuth();
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [previewUrls, setPreviewUrls] = useState<string[]>(currentAttachments);
     const [isDragging, setIsDragging] = useState(false);
-    const [isUploading, setIsUploading] = useState(false);
 
     if (!isOpen) return null;
 
     const remainingSlots = maxFiles - previewUrls.length;
 
-    const generatePreviewUrls = async (files: FileList | File[]) => {
+    const generatePreviewUrls = (files: FileList | File[]) => {
+        const newUrls: string[] = [];
         const filesArray = Array.from(files).slice(0, remainingSlots);
-        if (filesArray.length === 0) return;
 
-        setIsUploading(true);
-        const newRemoteUrls: string[] = [];
+        filesArray.forEach(file => {
+            // Generating local blob URLs for prototype functionality.
+            // In a real backend, we would upload to S3/Firebase here and get the remote URL.
+            const url = URL.createObjectURL(file);
+            newUrls.push(url);
+        });
 
-        try {
-            console.log("Starting upload for", filesArray.length, "files...");
-            
-            for (const file of filesArray) {
-                // Determine path based on type
-                const companyId = profile?.companyId || 'unassigned';
-                const folder = file.type.includes('pdf') ? 'documents' : 'photos';
-                const fileName = `${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
-                const storagePath = `companies/${companyId}/orders/attachments/${folder}/${fileName}`;
-                const storageRef = ref(storage, storagePath);
-                
-                console.log(`Uploading ${file.name} to ${storagePath}...`);
-                
-                const uploadTask = uploadBytesResumable(storageRef, file);
-
-                // Track upload progress for debugging
-                uploadTask.on('state_changed', 
-                    (snapshot) => {
-                        const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-                        console.log(`Upload focus: ${file.name} is ${progress.toFixed(1)}% done`);
-                    },
-                    (error) => {
-                        // This handles upload task failures (Auth, CORS, Quota)
-                        console.error(`Firebase Storage Error [Task] for ${file.name}:`, error.code, error.message);
-                        if (error.code === 'storage/unauthorized') {
-                            console.error("DEBUG: Usuário sem permissão no Storage. Verifique as 'Security Rules'.");
-                        } else if (error.code === 'storage/retry-limit-exceeded') {
-                            console.error("DEBUG: Tempo limite excedido. Verifique o CORS no Google Cloud Console.");
-                        }
-                    }
-                );
-
-                await uploadTask;
-                console.log(`Upload successful for ${file.name}. Fetching public URL...`);
-                
-                const downloadUrl = await getDownloadURL(storageRef);
-                
-                if (!downloadUrl || !downloadUrl.startsWith('http')) {
-                    throw new Error(`URL de download inválida gerada para ${file.name}`);
-                }
-                
-                newRemoteUrls.push(downloadUrl);
-            }
-
-            setPreviewUrls((prev: string[]) => {
-                // Ensure we don't save any local blobs or short filenames by mistake
-                const validPrev = safeArray(prev).filter(url => url.startsWith('http'));
-                return [...validPrev, ...newRemoteUrls].slice(0, maxFiles);
-            });
-            
-            console.log("All files uploaded and URLs retrieved successfully.");
-        } catch (error: any) {
-            console.error("CRITICAL ERROR during file upload process:", error);
-            // Help the user identify the root cause
-            let msg = "Erro ao fazer upload da foto!";
-            if (error.code?.includes('storage/')) {
-                msg += ` (Storage: ${error.code})`;
-            }
-            alert(msg);
-        } finally {
-            setIsUploading(false);
-        }
+        setPreviewUrls(prev => [...prev, ...newUrls].slice(0, maxFiles));
     };
 
     const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -134,7 +71,7 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
     };
 
     const removeFile = (indexToRemove: number) => {
-        setPreviewUrls((prev: string[]) => safeArray(prev).filter((_, index) => index !== indexToRemove));
+        setPreviewUrls(prev => prev.filter((_, index) => index !== indexToRemove));
     };
 
     const handleSave = () => {
@@ -187,13 +124,7 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
                             <UploadCloud className={cn("w-8 h-8", isDragging ? "text-brand-emerald" : "text-slate-400")} />
                         </div>
 
-                        {isUploading ? (
-                            <div className="flex flex-col items-center">
-                                <Loader2 className="w-10 h-10 text-brand-emerald animate-spin mb-3" />
-                                <p className="text-slate-700 dark:text-slate-200 font-bold">Subindo arquivos para a nuvem...</p>
-                                <p className="text-xs text-slate-500 mt-1">Isso pode levar alguns segundos dependendo do tamanho.</p>
-                            </div>
-                        ) : remainingSlots > 0 ? (
+                        {remainingSlots > 0 ? (
                             <>
                                 <p className="text-base font-semibold text-slate-700 dark:text-slate-200">
                                     Arraste seus arquivos para cá
@@ -220,49 +151,17 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
                                 )}
                             </h3>
                             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-                                {safeArray(previewUrls).map((url, index) => {
-                                    // Robust handling of PDF detection
-                                    const isPdf = url.toLowerCase().includes('.pdf') || url.includes('documents%2F');
-                                    
-                                    // Handle legacy broken attachments (just filenames like 'projeto.png')
-                                    const isBroken = !url.startsWith('http') && !url.startsWith('blob:');
-                                    
+                                {previewUrls.map((url, index) => {
+                                    const isPdf = url.includes('.pdf') || url.startsWith('blob:') && url.length < 50; // Simple heuristic for mock urls
                                     return (
-                                        <div key={index} className={cn(
-                                            "group relative aspect-square rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-800 border shadow-sm hover:shadow-md transition-all",
-                                            isBroken ? "border-red-200 dark:border-red-900/50" : "border-slate-200 dark:border-slate-700"
-                                        )}>
-                                            {isBroken ? (
-                                                <div className="w-full h-full flex flex-col items-center justify-center p-2 text-center">
-                                                    <div className="bg-red-50 dark:bg-red-950/30 p-2 rounded-full mb-1">
-                                                        <X className="w-5 h-5 text-red-500" />
-                                                    </div>
-                                                    <span className="text-[10px] font-bold text-red-600 dark:text-red-400 break-all">{url}</span>
-                                                    <span className="text-[9px] text-slate-500 uppercase mt-1">Erro de Link</span>
-                                                </div>
-                                            ) : isPdf ? (
+                                        <div key={index} className="group relative aspect-square rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm hover:shadow-md transition-all">
+                                            {isPdf ? (
                                                 <div className="w-full h-full flex flex-col items-center justify-center text-slate-400">
                                                     <FileText className="w-10 h-10 mb-2" />
                                                     <span className="text-xs font-medium">Documento</span>
                                                 </div>
                                             ) : (
-                                                <img 
-                                                    src={url} 
-                                                    alt={`Anexo ${index + 1}`} 
-                                                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                                                    onError={(e) => {
-                                                        // Fallback for broken images that still have a URL but don't load
-                                                        const target = e.target as HTMLImageElement;
-                                                        target.style.display = 'none';
-                                                        const parent = target.parentElement;
-                                                        if (parent) {
-                                                            const errorDiv = document.createElement('div');
-                                                            errorDiv.className = "absolute inset-0 flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-900 p-2 text-center";
-                                                            errorDiv.innerHTML = `<div class="p-2 bg-red-100 dark:bg-red-900/20 rounded-full mb-1"><svg class="w-6 h-6 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></div><span class="text-[10px] text-red-500 font-bold uppercase">Erro ao Carregar</span>`;
-                                                            parent.appendChild(errorDiv);
-                                                        }
-                                                    }}
-                                                />
+                                                <img src={url} alt={`Anexo ${index + 1}`} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
                                             )}
 
                                             {/* Action Overlay */}
@@ -292,10 +191,8 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
                     </button>
                     <button
                         onClick={handleSave}
-                        disabled={isUploading}
-                        className="px-6 py-2.5 text-sm font-bold text-white bg-gradient-to-r from-teal-500 to-brand-emerald hover:from-teal-600 hover:to-brand-emerald/90 rounded-xl shadow-lg shadow-teal-500/20 hover:shadow-teal-500/40 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="px-6 py-2.5 text-sm font-bold text-white bg-gradient-to-r from-teal-500 to-brand-emerald hover:from-teal-600 hover:to-brand-emerald/90 rounded-xl shadow-lg shadow-teal-500/20 hover:shadow-teal-500/40 transition-all flex items-center gap-2"
                     >
-                        {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
                         Salvar Anexos
                     </button>
                 </div>

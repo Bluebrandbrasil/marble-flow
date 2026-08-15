@@ -12,24 +12,23 @@ export const QualityIndicator: React.FC<QualityIndicatorProps> = ({ qualityScore
 
     return (
         <div
-            className={`flex items-center gap-2 px-4 py-1.5 rounded-lg border shadow-sm transition-colors duration-500 bg-white dark:bg-slate-900 ${isCelebrating
-                    ? 'border-emerald-200 text-emerald-700 dark:border-emerald-800'
-                    : 'border-slate-200 text-slate-700 dark:border-slate-800'
+            className={`flex items-center gap-2 px-4 py-2 rounded-full border shadow-sm transition-colors duration-500 ${isCelebrating
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-700 dark:bg-emerald-950/30 dark:border-emerald-800 dark:text-emerald-400'
+                    : 'bg-white border-slate-200 text-slate-700 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-300'
                 }`}
         >
             {isCelebrating ? (
-                <Trophy className="h-4.5 w-4.5 text-emerald-500" />
+                <Trophy className="h-5 w-5 text-emerald-500 dark:text-emerald-400 animate-pulse" />
             ) : (
-                <AlertTriangle className="h-4.5 w-4.5 text-amber-500" />
+                <AlertTriangle className="h-5 w-5 text-amber-500 dark:text-amber-400" />
             )}
-            <span className="text-[11px] font-black uppercase tracking-wider">
+            <span className="text-sm font-medium">
                 {isCelebrating ? (
-                    <>Operação Estável: {safeDays} dias sem avarias</>
+                    <>Estamos há <strong>{safeDays} dias</strong> sem registros de retorno/avaria 🚀</>
                 ) : (
-                    <>Qualidade: {safeDays} dias sem avarias</>
+                    <><strong>{safeDays} dias</strong> sem registros de retorno/avaria</>
                 )}
             </span>
         </div>
-
     );
 };
