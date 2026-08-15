@@ -1,67 +1,63 @@
 import { useState, useEffect } from 'react';
-import type { SinkModel } from '../types';
+import type { ServiceCatalogItem } from '../types';
 import { db } from '../lib/firebase';
 import { collection, query, where, onSnapshot, addDoc, deleteDoc, doc, updateDoc } from 'firebase/firestore';
 import { toISODateSafe } from '../lib/dateWriteUtils';
 import { useAuth } from '../context/AuthContext';
 
-export function useSinkCatalog() {
+export function useServiceCatalog() {
     const { profile } = useAuth();
-    const [sinks, setSinks] = useState<SinkModel[]>([]);
+    const [services, setServices] = useState<ServiceCatalogItem[]>([]);
     const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
         if (!profile?.companyId) {
-            setSinks([]);
+            setServices([]);
             setIsLoading(false);
             return;
         }
 
-        const q = query(collection(db, 'sinks'), where('companyId', '==', profile.companyId));
+        const q = query(collection(db, 'services'), where('companyId', '==', profile.companyId));
 
         const unsubscribe = onSnapshot(q, (snapshot) => {
-            const loaded: SinkModel[] = [];
+            const loadedServices: ServiceCatalogItem[] = [];
             snapshot.forEach((doc) => {
-                const data = doc.data();
-                loaded.push({ 
-                    id: doc.id, 
-                    ...data
-                } as SinkModel);
+                loadedServices.push({ id: doc.id, ...doc.data() } as ServiceCatalogItem);
             });
-            setSinks(loaded);
+            setServices(loadedServices);
             setIsLoading(false);
         }, (error) => {
-            console.error("Error loading sinks:", error);
+            console.error("Error loading services:", error);
             setIsLoading(false);
         });
 
         return () => unsubscribe();
     }, [profile?.companyId]);
 
-    const addSink = async (sink: Omit<SinkModel, 'id'>) => {
+    const addService = async (service: Omit<ServiceCatalogItem, 'id'>) => {
         if (!profile?.companyId) throw new Error("User company not found");
 
-        await addDoc(collection(db, 'sinks'), {
-            ...sink,
+        await addDoc(collection(db, 'services'), {
+            ...service,
             companyId: profile.companyId,
             userId: profile.uid,
             createdAt: toISODateSafe(new Date())!
         });
     };
 
-    const updateSink = async (id: string, data: Partial<SinkModel>) => {
+    const updateService = async (id: string, data: Partial<ServiceCatalogItem>) => {
         if (!profile?.companyId) throw new Error("User company not found");
 
-        const docRef = doc(db, 'sinks', id);
+        const docRef = doc(db, 'services', id);
         await updateDoc(docRef, data);
     };
 
-    const removeSink = async (id: string) => {
+    const removeService = async (id: string) => {
         if (!profile?.companyId) throw new Error("User company not found");
         
-        const docRef = doc(db, 'sinks', id);
+        const docRef = doc(db, 'services', id);
         await deleteDoc(docRef);
     };
 
-    return { sinks, isLoading, addSink, updateSink, removeSink };
+    return { services, isLoading, addService, updateService, removeService };
 }
