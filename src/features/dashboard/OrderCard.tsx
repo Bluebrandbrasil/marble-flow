@@ -1,5 +1,5 @@
 import React from 'react';
-import { Calendar, Package, AlertCircle, UploadCloud, Image as ImageIcon, Paperclip, CheckSquare } from 'lucide-react';
+import { Calendar, Package, AlertCircle, UploadCloud, Image as ImageIcon, Paperclip } from 'lucide-react';
 import type { Order } from '../../types';
 import { Card, CardContent } from '../../components/ui/Card';
 import { Badge } from '../../components/ui/Badge';

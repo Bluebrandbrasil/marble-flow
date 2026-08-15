@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { X, UploadCloud, Image as ImageIcon, FileText, Trash2 } from 'lucide-react';
+import { X, UploadCloud, FileText, Trash2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { Card } from './Card';
 

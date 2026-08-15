@@ -6,7 +6,7 @@ import { useSinkCatalog } from '../../hooks/useSinkCatalog';
 import { useMaterialCatalog } from '../../hooks/useMaterialCatalog';
 import { useStaffCatalog } from '../../hooks/useStaffCatalog';
 import { useAccessoryCatalog } from '../../hooks/useAccessoryCatalog';
-import { cn } from '../../lib/utils';
+
 
 // We extend Partial<Order> with the temporary UI fields passed from Measurement conversion
 interface OrderFormData extends Partial<Order> {
@@ -22,7 +22,7 @@ interface OrderFormProps {
     initialData?: OrderFormData;
 }
 
-export const OrderForm: React.FC<OrderFormProps> = ({ onSubmit, onCancel, initialDeadline, initialData }) => {
+export const OrderForm: React.FC<OrderFormProps> = ({ onSubmit, onCancel, initialData }) => {
     const { sinks } = useSinkCatalog();
     const { materials } = useMaterialCatalog();
     const { staff } = useStaffCatalog();
