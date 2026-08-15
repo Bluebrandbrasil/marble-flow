@@ -1,8 +1,19 @@
+import { safeParseISO, formatVisualDate } from './dateUtils';
 import jsPDF from 'jspdf';
 import QRCode from 'qrcode';
 import type { Order } from '../types';
 import type { CompanySettings } from '../hooks/useSettings';
 import { format } from 'date-fns';
+
+const getImageFormat = (url: string): 'PNG' | 'JPEG' | 'WEBP' => {
+    if (!url) return 'PNG';
+    const cleanUrl = url.toLowerCase().split('?')[0].split('#')[0];
+    if (cleanUrl.endsWith('.jpg') || cleanUrl.endsWith('.jpeg') || url.startsWith('data:image/jpeg')) return 'JPEG';
+    if (cleanUrl.endsWith('.webp') || url.startsWith('data:image/webp')) return 'WEBP';
+    if (url.startsWith('data:image/png')) return 'PNG';
+    return 'PNG';
+};
+
 
 export const generateProductionSheet = async (order: Order, settings: CompanySettings) => {
     const doc = new jsPDF();
@@ -11,24 +22,29 @@ export const generateProductionSheet = async (order: Order, settings: CompanySet
     const logoSize = 30;
     if (settings.logoUrl) {
         try {
-            doc.addImage(settings.logoUrl, 'PNG', 15, 10, logoSize, logoSize, undefined, 'FAST');
-        } catch (e) { }
+            const format = getImageFormat(settings.logoUrl);
+            doc.addImage(settings.logoUrl, format, 15, 10, logoSize, logoSize, undefined, 'FAST');
+        } catch (e) { 
+            console.error("Error adding logo to PDF:", e);
+        }
     }
 
-    doc.setFontSize(16);
-    doc.setFont('helvetica', 'bold');
+
+    doc.setFontSize(22);
+    doc.setFont('helvetica', 'black');
     doc.text("ORDEM DE PRODUÇÃO", logoSize + 25, 20);
-    doc.setFontSize(12);
-    doc.text(`O.S.: #${order.protocolNumber}`, logoSize + 25, 28);
+    doc.setFontSize(14);
+    doc.text(`O.S.: #${order?.protocolNumber || '???'}`, logoSize + 25, 29);
 
-    doc.setFontSize(10);
-    doc.setFont('helvetica', 'normal');
-    doc.text(`Cliente: ${order.customerName.substring(0, 50)}`, logoSize + 25, 35);
-
+    doc.setFontSize(13);
     doc.setFont('helvetica', 'bold');
-    doc.text(`Instalação: ${format(new Date(order.deadline), 'dd/MM/yyyy')}`, logoSize + 25, 42);
+    doc.text(`Cliente: ${order.customerName.substring(0, 50)}`, logoSize + 25, 38);
 
-    let yPos = 50;
+    doc.setFontSize(13);
+    doc.setFont('helvetica', 'black');
+    doc.text(`Instalação: ${formatVisualDate(order.deadline, 'dd/MM/yyyy')}`, logoSize + 25, 46);
+
+    let yPos = 55;
 
     // -- Returns / Priorities Banner --
     if (order.isReturn) {
@@ -85,70 +101,114 @@ export const generateProductionSheet = async (order: Order, settings: CompanySet
         }
     }
 
-    // -- Measurements Section --
-    doc.setFontSize(14);
+    // -- Items & Measurements Section --
+    doc.setFontSize(16);
     doc.setFont('helvetica', 'bold');
-    doc.text("MEDIDAS E MATERIAIS", 15, yPos);
-    yPos += 8;
+    doc.text("ITENS E MEDIDAS DA PRODUÇÃO", 15, yPos);
+    yPos += 10;
 
-    doc.setFontSize(11);
-    doc.setDrawColor(200);
-    doc.setFillColor(250, 250, 250);
-    doc.rect(15, yPos, 180, 25, 'FD');
+    if (order.items && order.items.length > 0) {
+        order.items.forEach((item, index) => {
+            if (yPos > 260) {
+                doc.addPage();
+                yPos = 20;
+            }
 
-    doc.setFont('helvetica', 'normal');
-    doc.text("Pedra:", 20, yPos + 8);
-    doc.setFont('helvetica', 'bold');
-    doc.text(order.material.substring(0, 50), 35, yPos + 8);
+            doc.setFillColor(250, 250, 250);
+            doc.setDrawColor(220);
+            doc.rect(15, yPos, 180, 32, 'FD');
 
-    doc.setFont('helvetica', 'normal');
-    doc.text("Frontão:", 20, yPos + 18);
-    doc.setFont('helvetica', 'bold');
-    doc.text(order.splashback || "Padrão", 40, yPos + 18);
+            doc.setFontSize(10);
+            doc.setFont('helvetica', 'bold');
+            doc.text(`${index + 1}. ${item.name.toUpperCase()}`, 20, yPos + 7);
 
-    doc.setFont('helvetica', 'normal');
-    doc.text("Saia:", 105, yPos + 18);
-    doc.setFont('helvetica', 'bold');
-    doc.text(order.skirt || "Padrão", 115, yPos + 18);
+            doc.setFontSize(9);
+            doc.setFont('helvetica', 'normal');
+            doc.text(`Material: ${item.material || order.material}`, 20, yPos + 13);
+            doc.text(`Medidas: ${item.width} x ${item.length} cm`, 20, yPos + 18);
+            
+            doc.text(`Qtd: ${item.quantity || 1} un`, 105, yPos + 13);
+            doc.text(`Área: ${item.area?.toFixed(2)} m²`, 105, yPos + 18);
 
-    yPos += 28;
+            if (item.finishings) {
+                doc.setFontSize(8);
+                doc.setFont('helvetica', 'bold');
+                doc.text(`ACABAMENTOS: ${item.finishings.substring(0, 80)}`, 20, yPos + 24);
+            }
+
+            // Status e Checklist individual
+            doc.setFontSize(7);
+            doc.setFont('helvetica', 'bold');
+            const statusText = `STATUS: ${item.productionStatus?.toUpperCase() || 'PENDENTE'}`;
+            const ck = item.checklist || { corte: false, acabamento: false, conferencia: false, instalado: false };
+            const checklistText = `CHECKLIST: [${ck.corte ? 'X' : ' '}] CORTE   [${ck.acabamento ? 'X' : ' '}] ACABAMENTO   [${ck.conferencia ? 'X' : ' '}] CONF.   [${ck.instalado ? 'X' : ' '}] INST.`;
+            
+            doc.text(statusText, 20, yPos + 29);
+            doc.text(checklistText, 105, yPos + 29);
+
+            yPos += 38;
+        });
+    } else {
+        doc.setFontSize(13);
+        doc.setDrawColor(200);
+        doc.setFillColor(250, 250, 250);
+        doc.rect(15, yPos, 180, 30, 'FD');
+
+        doc.setFont('helvetica', 'normal');
+        doc.text("Pedra:", 20, yPos + 10);
+        doc.setFont('helvetica', 'black');
+        doc.text(order.material.substring(0, 50), 38, yPos + 10);
+
+        doc.setFont('helvetica', 'normal');
+        doc.text("Frontão:", 20, yPos + 22);
+        doc.setFont('helvetica', 'black');
+        doc.text(order.splashback || "Padrão", 42, yPos + 22);
+
+        doc.setFont('helvetica', 'normal');
+        doc.text("Saia:", 105, yPos + 22);
+        doc.setFont('helvetica', 'black');
+        doc.text(order.skirt || "Padrão", 118, yPos + 22);
+
+        yPos += 38;
+    }
 
     // -- Sink Details --
-    doc.setFontSize(14);
+    doc.setFontSize(16);
     doc.setFont('helvetica', 'bold');
     doc.text("DETALHAMENTO DA CUBA", 15, yPos);
-    yPos += 8;
+    yPos += 10;
 
-    doc.setFontSize(11);
+    doc.setFontSize(13);
     if (!order.sinkName && !order.sinkPhotoUrl) {
         doc.setFont('helvetica', 'normal');
         doc.text("Nenhuma cuba selecionada ou especificada para este pedido.", 15, yPos);
-        yPos += 15;
+        yPos += 18;
     } else {
         doc.setFont('helvetica', 'normal');
         doc.text("Modelo:", 15, yPos);
-        doc.setFont('helvetica', 'bold');
-        doc.text(order.sinkName || "Cuba Selecionada", 32, yPos);
+        doc.setFont('helvetica', 'black');
+        doc.text(order.sinkName || "Cuba Selecionada", 35, yPos);
 
         if (order.sinkType) {
             doc.setFont('helvetica', 'normal');
-            doc.text("Tipo:", 15, yPos + 6);
-            doc.setFont('helvetica', 'bold');
-            doc.text(order.sinkType.toUpperCase(), 26, yPos + 6);
-            yPos += 6;
+            doc.text("Tipo:", 15, yPos + 8);
+            doc.setFont('helvetica', 'black');
+            doc.text(order.sinkType.toUpperCase(), 30, yPos + 8);
+            yPos += 8;
         }
 
-        yPos += 8;
+        yPos += 12;
 
         if (order.sinkPhotoUrl) {
             try {
+                const format = getImageFormat(order.sinkPhotoUrl);
                 // Add bounding box for the image to make it look like a technical blueprint embed
                 doc.setDrawColor(200);
                 doc.rect(15, yPos, 60, 60);
-                doc.addImage(order.sinkPhotoUrl, 'PNG', 15, yPos, 60, 60, undefined, 'FAST');
+                doc.addImage(order.sinkPhotoUrl, format, 15, yPos, 60, 60, undefined, 'FAST');
                 yPos += 65;
             } catch (e) {
-                console.warn("Could not render sink photo in PDF.");
+                console.warn("Could not render sink photo in PDF:", e);
                 yPos += 5;
             }
         } else {
@@ -209,11 +269,13 @@ export const generateProductionSheet = async (order: Order, settings: CompanySet
 
             if (acc.photoUrl) {
                 try {
-                    doc.addImage(acc.photoUrl, 'PNG', accXOffset + 55, yPos + 2, 20, 20, undefined, 'FAST');
+                    const format = getImageFormat(acc.photoUrl);
+                    doc.addImage(acc.photoUrl, format, accXOffset + 55, yPos + 2, 20, 20, undefined, 'FAST');
                 } catch (e) {
-                    // Ignore photo error
+                    console.warn("Could not add accessory photo to PDF:", e);
                 }
             }
+
 
             accXOffset += 85; // Move right for next item
         });
@@ -278,16 +340,19 @@ export const generateProductionSheet = async (order: Order, settings: CompanySet
     doc.line(25, yPos, 90, yPos);
     doc.text("Responsável pela Produção", 57.5, yPos + 5, { align: 'center' });
 
-    // Signature 2: Serrador
+    // Signature 2: Produção
     if (order.sawyerName) {
         doc.text(order.sawyerName, 152.5, yPos - 2, { align: 'center' });
     }
     doc.line(120, yPos, 185, yPos);
-    doc.text("Funcionário/Serrador", 152.5, yPos + 5, { align: 'center' });
+    doc.text("Funcionário / Produção", 152.5, yPos + 5, { align: 'center' });
 
     // Save
-    const safeName = order.customerName.replace(/[^a-zA-Z0-9\u00C0-\u017F]/g, '_').substring(0, 30);
-    const filename = `OS_${safeName}.pdf`;
+    // Save dynamic filename
+    const firstStone = order.material || 'Diverso';
+    const cleanCustomerName = order.customerName.replace(/[<>:"/\\|?*]/g, '').trim();
+    const cleanMaterial = firstStone.replace(/[<>:"/\\|?*]/g, '').trim();
+    const filename = `Producao - ${cleanMaterial} - ${cleanCustomerName}.pdf`;
 
     const pdfOutput = doc.output('blob');
     const blob = new Blob([pdfOutput], { type: 'application/pdf' });
@@ -351,12 +416,12 @@ export const generateBatchProductionSheet = async (orders: Order[], settings: Co
 
                 doc.setFontSize(6);
                 doc.setFont('helvetica', 'normal');
-                doc.text(`O.S.: ${order.protocolNumber}`, x + 2, y + 8);
+                doc.text(`O.S.: ${order?.protocolNumber || 'OS'}`, x + 2, y + 8);
 
                 // -- Deadline (Highlighted) --
                 doc.setFontSize(9);
                 doc.setFont('helvetica', 'bold');
-                doc.text(`Instalação: ${format(new Date(order.deadline), 'dd/MM')}`, x + cardWidth - 2, y + 5, { align: 'right' });
+                doc.text(`Instalação: ${formatVisualDate(order.deadline, 'dd/MM')}`, x + cardWidth - 2, y + 5, { align: 'right' });
 
                 // -- Client (Highlighted) --
                 doc.setFillColor(240, 240, 240);
@@ -423,7 +488,7 @@ export const generateBatchProductionSheet = async (orders: Order[], settings: Co
                     doc.text(order.sawyerName, x + 20, sigY - 1, { align: 'center' });
                 }
                 doc.setFontSize(5);
-                doc.text("Serrador", x + 20, sigY + 3, { align: 'center' });
+                doc.text("Produção", x + 20, sigY + 3, { align: 'center' });
 
                 doc.line(x + 40, sigY, x + 70, sigY);
                 doc.text("Conferência", x + 55, sigY + 3, { align: 'center' });

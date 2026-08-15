@@ -37,3 +37,42 @@ coverage/
 # Misc
 .gemini/
 .system_generated/
+
+# Local scratch / diagnostics
+scratch/
+scratch_*
+
+# Firebase local cache
+.firebase/
+
+# Local agent workspace
+.agent/
+
+# Root temporary files
+agora
+all_splits.txt
+type_errors.txt
+editar
+{
+test-search-strict.ts
+test-search.js
+test2.js
+test_calc.ts
+test_search.js
+audit_*
+fix*
+refactor*
+replace*
+shield*
+scan_results.csv
+security-auth-fixes.md
+planned_module_implementation_report.md
+quick_sales_implementation_report.md
+backup_adriano_*
+cors.json
+check-quote.mjs
+functions_logic.ts
+functions/lib/
+functions/backfill_measurement_measurer_fields.cjs
+functions/set_user_claims_admin.js
+functions/test_staff_login.js

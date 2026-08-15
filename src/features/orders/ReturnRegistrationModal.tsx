@@ -1,3 +1,4 @@
+import { safeArray } from '../../lib/dataDiagnostics';
 import React, { useState } from 'react';
 import { Modal } from '../../components/ui/Modal';
 import { Button } from '../../components/ui/Button';
@@ -53,7 +54,7 @@ export const ReturnRegistrationModal: React.FC<ReturnRegistrationModalProps> = (
     const toggleReason = (reason: string) => {
         setSelectedReasons(prev =>
             prev.includes(reason)
-                ? prev.filter(r => r !== reason)
+                ? safeArray(prev).filter(r => r !== reason)
                 : [...prev, reason]
         );
     };
@@ -76,7 +77,7 @@ export const ReturnRegistrationModal: React.FC<ReturnRegistrationModalProps> = (
                         Motivos do Retorno
                     </label>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                        {RETURN_REASONS.map(reason => (
+                        {safeArray(RETURN_REASONS).map(reason => (
                             <div key={reason} className="flex items-center space-x-2">
                                 <input
                                     type="checkbox"

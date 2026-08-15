@@ -7,20 +7,81 @@
 }
 
 body {
-  @apply bg-slate-50 dark:bg-[#0a0a0a] text-slate-900 dark:text-slate-100 min-h-screen font-sans antialiased;
-  /* Add a subtle mesh gradient or patterned background for light mode if desired, but sticking to solid/slate for clean look */
+  @apply bg-brand-rocha-bg text-slate-900 min-h-screen font-sans antialiased;
 }
 
-/* Glassmorphism Classes */
+/* Density Tokens Hub - Marble Flow Enterprise High-Density */
+:root {
+  --density-p: theme('spacing.4');
+  --density-gap: theme('spacing.4');
+  --density-table-px: theme('spacing.4');
+  --density-table-py: theme('spacing.3');
+  --density-input-h: theme('spacing.10');
+  --density-radius: theme('borderRadius.xl');
+  --density-fs-title: theme('fontSize.lg');
+  --density-fs-value: theme('fontSize.2xl');
+}
+
+/* Adaptive Compact Mode for Ultrawide Displays (>= 1600px) */
+@media (min-width: 1600px) {
+  :root {
+    --density-p: theme('spacing.3');
+    --density-gap: theme('spacing.3');
+    --density-table-px: theme('spacing.3');
+    --density-table-py: theme('spacing.2');
+    --density-input-h: theme('spacing.9');
+    --density-radius: theme('borderRadius.lg');
+    --density-fs-title: theme('fontSize.base');
+    --density-fs-value: theme('fontSize.xl');
+  }
+}
+
+/* Identidade Rocha Style Classes (Light Premium) */
 @layer components {
-  .glass-panel {
-    @apply bg-white/70 dark:bg-[#121212]/80 backdrop-blur-xl border border-white/60 dark:border-white/10 shadow-xl;
+  .rocha-panel {
+    @apply bg-brand-rocha-card border border-brand-rocha-border shadow-sm;
+    padding: var(--density-p);
+    border-radius: var(--density-radius);
   }
 
-  .glass-card {
-    @apply bg-white/80 dark:bg-[#1a1a1a]/80 backdrop-blur-[10px] border border-slate-200/50 dark:border-white/10 shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-0.5;
+  .rocha-card {
+    @apply bg-brand-rocha-card border border-brand-rocha-border shadow-sm transition-all duration-300 relative overflow-hidden;
+    padding: var(--density-p);
+    border-radius: var(--density-radius);
+  }
+
+  .rocha-card-hover {
+    @apply hover:border-brand-rocha-primary/30 hover:shadow-xl hover:shadow-brand-rocha-primary/5 cursor-pointer;
+  }
+
+  .rocha-text-title {
+    @apply font-bold text-slate-900 tracking-tight;
+    font-size: var(--density-fs-title);
+  }
+
+  .rocha-text-value {
+    @apply font-black text-slate-900 tracking-tighter;
+    font-size: var(--density-fs-value);
+  }
+
+  .rocha-text-label {
+    @apply text-[9px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.12em] leading-none;
+  }
+
+  /* High Density Table Utility */
+  .rocha-table-cell {
+    padding-left: var(--density-table-px);
+    padding-right: var(--density-table-px);
+    padding-top: var(--density-table-py);
+    padding-bottom: var(--density-table-py);
+  }
+
+  .rocha-btn-compact {
+    height: var(--density-input-h);
+    @apply px-4 py-0 text-[10px] font-black uppercase tracking-widest rounded-lg;
   }
 }
+
 
 /* Custom Animations */
 @keyframes pulse-border {
@@ -76,4 +137,17 @@ html {
 
 ::-webkit-scrollbar-thumb:hover {
   @apply bg-slate-400 dark:bg-slate-700;
+}
+
+/* Chrome, Safari, Edge, Opera */
+input::-webkit-outer-spin-button,
+input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  appearance: none;
+  margin: 0;
+}
+
+/* Firefox */
+input[type=number] {
+  -moz-appearance: textfield;
 }

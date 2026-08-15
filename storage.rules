@@ -1,0 +1,134 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isSuperAdmin() {
+      return isAuthenticated() && request.auth.token.superadmin == true;
+    }
+
+    function isApprovedUser() {
+      return isAuthenticated() && (
+        isSuperAdmin() || 
+        request.auth.token.status == "approved"
+      );
+    }
+
+    // Validate that the filename ends with a valid extension (case-insensitive)
+    function hasValidExtension(fileName) {
+      return fileName.matches('(?i).*\\.(pdf|jpg|jpeg|png|webp)$');
+    }
+
+    // Validate that the file size is under 10MB and the content type is image or PDF
+    function isValidMetadata() {
+      return request.resource.size < 10 * 1024 * 1024
+        && (request.resource.contentType.matches('image/.*') || request.resource.contentType == 'application/pdf');
+    }
+
+    // 1. Order attachments: companies/{companyId}/orders/attachments/{folder}/{fileName}
+    // Allows images and PDFs for orders
+    match /companies/{companyId}/orders/attachments/{folder}/{fileName} {
+      allow read: if request.auth != null
+        && (request.auth.token.companyId == companyId || request.auth.token.superadmin == true);
+      allow write: if request.auth != null
+        && (request.auth.token.companyId == companyId || request.auth.token.superadmin == true)
+        && request.resource.size < 10 * 1024 * 1024
+        && (request.resource.contentType.matches('image/.*') || request.resource.contentType == 'application/pdf')
+        && hasValidExtension(fileName);
+    }
+
+    // 1b. In-person signed contracts: companies/{companyId}/contracts/signed/{contractId}/{fileName}
+    match /companies/{companyId}/contracts/signed/{contractId}/{fileName} {
+      allow read: if isAuthenticated() && (request.auth.token.companyId == companyId || isSuperAdmin());
+      allow write: if isApprovedUser()
+        && (request.auth.token.companyId == companyId || isSuperAdmin())
+        && isValidMetadata()
+        && hasValidExtension(fileName);
+    }
+
+    // 1c. Payment receipts: companies/{companyId}/orders/{orderId}/payments/{allPaths=**}
+    match /companies/{companyId}/orders/{orderId}/payments/{allPaths=**} {
+      allow read: if request.auth != null
+        && (request.auth.token.companyId == companyId || request.auth.token.superadmin == true);
+      allow write: if request.auth != null
+        && (request.auth.token.companyId == companyId || request.auth.token.superadmin == true)
+        && request.resource.size < 10 * 1024 * 1024
+        && (request.resource.contentType.matches('image/.*') || request.resource.contentType == 'application/pdf');
+    }
+
+    // 2. Company files general wildcard (e.g. logos) under companies/{companyId}/
+    // Restricts to image/* only, ensuring secure uploads. Prevent medidores from writing freely.
+    match /companies/{companyId}/{allPaths=**} {
+      allow read: if request.auth != null
+        && (request.auth.token.companyId == companyId || request.auth.token.superadmin == true);
+
+      allow write: if request.auth != null
+        && (request.auth.token.companyId == companyId || request.auth.token.superadmin == true)
+        && request.auth.token.role != 'medidor'
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    // 2a. Planned Contract files (logo and signature)
+    match /companies/{companyId}/planned/contract/{folder}/{fileName} {
+      allow read: if isAuthenticated() && (request.auth.token.companyId == companyId || isSuperAdmin());
+      allow write: if isApprovedUser()
+        && (request.auth.token.companyId == companyId || isSuperAdmin())
+        && request.auth.token.role in ['admin', 'company_admin', 'superadmin']
+        && isValidMetadata()
+        && hasValidExtension(fileName)
+        && folder in ['logo', 'signature'];
+    }
+
+    // 2b. Medições photos
+    match /companies/{companyId}/medicoes/{measurementId}/photos/{category}/{fileName} {
+      allow read: if isApprovedUser() && (request.auth.token.companyId == companyId || isSuperAdmin());
+      allow write: if isApprovedUser()
+        && (request.auth.token.companyId == companyId || isSuperAdmin())
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*')
+        && hasValidExtension(fileName)
+        && (
+           isSuperAdmin() || 
+           request.auth.token.role in ['company_admin', 'admin'] ||
+           (
+             firestore.get(/databases/(default)/documents/medicoes/$(measurementId)).data.companyId == companyId &&
+             (
+               firestore.get(/databases/(default)/documents/medicoes/$(measurementId)).data.assignedStaffId == request.auth.uid ||
+               firestore.get(/databases/(default)/documents/medicoes/$(measurementId)).data.measurerId == request.auth.uid ||
+               firestore.get(/databases/(default)/documents/medicoes/$(measurementId)).data.assignedMeasurerId == request.auth.uid ||
+               firestore.get(/databases/(default)/documents/medicoes/$(measurementId)).data.assignedTo == request.auth.uid
+             )
+           )
+        );
+    }
+
+    // 2c. Medições attachments (projects, blueprints, PDFs, images)
+    match /companies/{companyId}/medicoes/{measurementId}/attachments/{fileName} {
+      allow read: if isApprovedUser() && (request.auth.token.companyId == companyId || isSuperAdmin());
+      allow write: if isApprovedUser()
+        && (request.auth.token.companyId == companyId || isSuperAdmin())
+        && request.resource.size < 10 * 1024 * 1024
+        && (request.resource.contentType.matches('image/.*') || request.resource.contentType == 'application/pdf')
+        && hasValidExtension(fileName);
+    }
+
+    // 3. Staff photos
+    match /staff_photos/{companyId}/{fileName} {
+      allow read: if isAuthenticated() && (request.auth.token.companyId == companyId || isSuperAdmin());
+      allow write: if isApprovedUser() 
+        && (request.auth.token.companyId == companyId || isSuperAdmin()) 
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*')
+        && hasValidExtension(fileName);
+    }
+
+    // Catch-all block for other paths (accessible only to SuperAdmin)
+    match /{allPaths=**} {
+      allow read, write: if isSuperAdmin();
+    }
+  }
+}
