@@ -14,6 +14,12 @@ export default {
           ruby: '#e11d48',    // Alerts/Returns
           dark: '#0a0a0a',    // Deep dark background
           darker: '#050505',
+          rocha: {
+            bg: '#F8FAFC',
+            card: '#FFFFFF',
+            border: '#E2E8F0',
+            primary: '#7C3AED',
+          }
         }
       },
       backgroundImage: {
