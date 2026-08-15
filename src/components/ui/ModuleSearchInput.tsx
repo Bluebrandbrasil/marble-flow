@@ -1,7 +1,7 @@
 import React, { useCallback, useState, useEffect } from 'react';
 import { Search, X } from 'lucide-react';
-import { Badge } from './badge';
-import { Input } from './input';
+import { Badge } from './Badge';
+import { Input } from './Input';
 import { cn } from '../../lib/utils';
 
 interface ModuleSearchInputProps {
