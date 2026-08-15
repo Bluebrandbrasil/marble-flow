@@ -1,3 +1,4 @@
+import { safeArray } from '../../lib/dataDiagnostics';
 import React, { useMemo } from 'react';
 import type { Order, Measurement } from '../../types';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../components/ui/Card';
@@ -16,8 +17,9 @@ import {
     Cell,
     Legend
 } from 'recharts';
-import { format, parseISO, differenceInDays } from 'date-fns';
+import { format, differenceInDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { safeParseISO } from '../../lib/dateUtils';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/Tabs';
 import confetti from 'canvas-confetti';
 
@@ -30,13 +32,14 @@ const COLORS = ['#0f766e', '#0369a1', '#b45309', '#be123c', '#4d7c0f', '#4338ca'
 
 export const ReportsView: React.FC<ReportsViewProps> = ({ orders, measurements = [] }) => {
     const prevDaysRef = React.useRef<number>(0);
-    const completedOrders = useMemo(() => orders.filter(o => o.completionStatus), [orders]);
+    const completedOrders = useMemo(() => (orders || []).filter(o => o?.completionStatus), [orders]);
 
     const returnReasonsData = useMemo(() => {
-        return completedOrders.reduce((acc, order) => {
-            if (order.returnReasons) {
-                order.returnReasons.forEach(reason => {
-                    acc[reason] = (acc[reason] || 0) + 1;
+        return (completedOrders || []).reduce((acc, order) => {
+            if (order?.returnReasons) {
+                (order.returnReasons || []).forEach(reason => {
+                    const r = String(reason || 'Não Especificado');
+                    acc[r] = (acc[r] || 0) + 1;
                 });
             }
             return acc;
@@ -50,9 +53,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ orders, measurements =
     }, [returnReasonsData]);
 
     const materialData = useMemo(() => {
-        const stats = orders.reduce((acc, order) => {
-            if (order.material) {
-                acc[order.material] = (acc[order.material] || 0) + 1;
+        const stats = (orders || []).reduce((acc, order) => {
+            if (order?.material) {
+                const mat = String(order.material);
+                acc[mat] = (acc[mat] || 0) + 1;
             }
             return acc;
         }, {} as Record<string, number>);
@@ -63,15 +67,16 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ orders, measurements =
     }, [orders]);
 
     const installerData = useMemo(() => {
-        const stats = completedOrders.reduce((acc, order) => {
-            if (order.installerName) {
-                if (!acc[order.installerName]) {
-                    acc[order.installerName] = { name: order.installerName, sucesso: 0, retorno: 0 };
+        const stats = (completedOrders || []).reduce((acc, order) => {
+            const iName = String(order?.installerName || 'Não Atribuído');
+            if (order?.installerName) {
+                if (!acc[iName]) {
+                    acc[iName] = { name: iName, sucesso: 0, retorno: 0 };
                 }
                 if (order.completionStatus === 'success') {
-                    acc[order.installerName].sucesso += 1;
+                    acc[iName].sucesso += 1;
                 } else {
-                    acc[order.installerName].retorno += 1;
+                    acc[iName].retorno += 1;
                 }
             }
             return acc;
@@ -79,10 +84,11 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ orders, measurements =
         return Object.values(stats).sort((a, b) => (b.sucesso + b.retorno) - (a.sucesso + a.retorno));
     }, [completedOrders]);
 
-    const monthlyData = useMemo(() => {
-        const stats = orders.reduce((acc, order) => {
-            if (!order.createdAt) return acc;
-            const monthObj = parseISO(order.createdAt);
+    const monthlyStats = useMemo(() => {
+        const stats = (orders || []).reduce((acc, order) => {
+            if (!order?.createdAt) return acc;
+            const monthObj = safeParseISO(order.createdAt);
+            if (!monthObj) return acc;
             const monthKey = format(monthObj, 'yyyy-MM');
             const monthLabel = format(monthObj, 'MMM/yy', { locale: ptBR });
 
@@ -96,30 +102,45 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ orders, measurements =
             return acc;
         }, {} as Record<string, { monthKey: string, monthLabel: string, total: number, concluidas: number }>);
 
-        return Object.values(stats)
-            .sort((a, b) => a.monthKey.localeCompare(b.monthKey))
-            .slice(-6); // Last 6 months
+        const sortedStats = Object.values(stats).sort((a, b) => a.monthKey.localeCompare(b.monthKey));
+        
+        // MoM Comparisons
+        const currentMonth = sortedStats[sortedStats.length - 1] || { total: 0, concluidas: 0 };
+        const prevMonth = sortedStats[sortedStats.length - 2] || { total: 0, concluidas: 0 };
+
+        const totalVariation = prevMonth.total > 0 ? ((currentMonth.total - prevMonth.total) / prevMonth.total) * 100 : 0;
+        const finishedVariation = prevMonth.concluidas > 0 ? ((currentMonth.concluidas - prevMonth.concluidas) / prevMonth.concluidas) * 100 : 0;
+
+        return {
+            chartData: sortedStats.slice(-6),
+            current: currentMonth,
+            prev: prevMonth,
+            variations: {
+                total: totalVariation,
+                finished: finishedVariation
+            }
+        };
     }, [orders]);
 
     // Novidades: Métricas de mini-cards
     const pendingInstallPieces = useMemo(() => {
-        return orders.filter(o => o.status === 'ready_for_conference' || o.status === 'installation').length;
+        return safeArray(orders).filter(o => o.status === 'ready_for_conference' || o.status === 'installation').length;
     }, [orders]);
 
     const daysWithoutReturn = useMemo(() => {
-        const returns = orders.filter(o =>
+        const returns = safeArray(orders).filter(o =>
             (o.completionStatus === 'return' && o.completionDate) ||
             (o.isInternalReturn && o.remakeDate)
         );
         if (returns.length === 0) return 14; // Start value
 
-        const latestReturnDate = returns.reduce((latest, current) => {
+        const latestReturnDate = safeArray(returns).reduce((latest, current) => {
             const dateStr = current.completionDate || current.remakeDate || current.createdAt;
             const date = new Date(dateStr).getTime();
             return date > latest ? date : latest;
         }, 0);
 
-        return differenceInDays(new Date(), new Date(latestReturnDate));
+        return differenceInDays(new Date(), safeParseISO(latestReturnDate) || new Date());
     }, [orders]);
 
     const worstPiece = pendingInstallPieces > 0 ? "Bancadas em L" : "Nenhum Erro Crítico";
@@ -139,15 +160,15 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ orders, measurements =
 
     const conversionRate = useMemo(() => {
         if (measurements.length === 0) return 0;
-        const converted = measurements.filter(m => m.status === 'completed').length;
+        const converted = safeArray(measurements).filter(m => m.status === 'completed').length;
         return (converted / measurements.length) * 100;
     }, [measurements]);
 
     // Comercial / Funnel Data
     const funnelData = useMemo(() => {
         const total = measurements.length;
-        const realizadas = measurements.filter(m => m.status !== 'scheduled').length;
-        const convertidas = measurements.filter(m => m.status === 'completed').length;
+        const realizadas = safeArray(measurements).filter(m => m.status !== 'scheduled').length;
+        const convertidas = safeArray(measurements).filter(m => m.status === 'completed').length;
         return [
             { stage: 'Agendadas', count: total },
             { stage: 'Realizadas', count: realizadas },
@@ -156,8 +177,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ orders, measurements =
     }, [measurements]);
 
     const declineReasonsChartData = useMemo(() => {
-        const declined = measurements.filter(m => m.status === 'declined' && m.declineReason);
-        const stats = declined.reduce((acc, m) => {
+        const declined = safeArray(measurements).filter(m => m.status === 'declined' && m.declineReason);
+        const stats = safeArray(declined).reduce((acc, m) => {
             const reason = m.declineReason!;
             acc[reason] = (acc[reason] || 0) + 1;
             return acc;
@@ -166,12 +187,12 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ orders, measurements =
     }, [measurements]);
 
     const openMeasurementsCount = useMemo(() => {
-        return measurements.filter(m => m.status === 'scheduled').length;
+        return safeArray(measurements).filter(m => m.status === 'scheduled').length;
     }, [measurements]);
 
     const topLostMaterials = useMemo(() => {
-        const declined = measurements.filter(m => m.status === 'declined' && m.material);
-        const stats = declined.reduce((acc, m) => {
+        const declined = safeArray(measurements).filter(m => m.status === 'declined' && m.material);
+        const stats = safeArray(declined).reduce((acc, m) => {
             const mat = m.material!;
             acc[mat] = (acc[mat] || 0) + 1;
             return acc;
@@ -300,7 +321,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ orders, measurements =
                                 <div>
                                     <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Total de Obras Mês</p>
                                     <h3 className="text-2xl font-bold text-slate-900 dark:text-slate-50">
-                                        {monthlyData.length > 0 ? monthlyData[monthlyData.length - 1].total : 0}
+                                        {monthlyStats.current.total}
                                     </h3>
                                 </div>
                             </CardContent>
@@ -326,7 +347,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ orders, measurements =
                                 <div>
                                     <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Finalizadas no Mês</p>
                                     <h3 className="text-2xl font-bold text-slate-900 dark:text-slate-50">
-                                        {monthlyData.length > 0 ? monthlyData[monthlyData.length - 1].concluidas : 0}
+                                        {monthlyStats.current.concluidas}
                                     </h3>
                                 </div>
                             </CardContent>
@@ -343,9 +364,9 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ orders, measurements =
                                 <CardDescription>Comparativo entre ordens abertas e convertidas em finalizadas.</CardDescription>
                             </CardHeader>
                             <CardContent className="h-80 w-full min-w-0">
-                                {monthlyData.length > 0 ? (
+                                {monthlyStats.chartData.length > 0 ? (
                                     <ResponsiveContainer width="100%" height="100%">
-                                        <BarChart data={monthlyData} margin={{ top: 20, right: 30, left: 0, bottom: 5 }}>
+                                        <BarChart data={monthlyStats.chartData} margin={{ top: 20, right: 30, left: 0, bottom: 5 }}>
                                             <defs>
                                                 <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
                                                     <stop offset="5%" stopColor="#94a3b8" stopOpacity={0.8} />
@@ -387,7 +408,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ orders, measurements =
                                     <ResponsiveContainer width="100%" height="100%">
                                         <PieChart>
                                             <defs>
-                                                {COLORS.map((color, index) => (
+                                                {safeArray(COLORS).map((color, index) => (
                                                     <linearGradient key={`grad-${index}`} id={`colorGrad-${index}`} x1="0" y1="0" x2="1" y2="1">
                                                         <stop offset="0%" stopColor={color} stopOpacity={1} />
                                                         <stop offset="100%" stopColor={color} stopOpacity={0.6} />
@@ -407,7 +428,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ orders, measurements =
                                                 labelLine={false}
                                                 stroke="none"
                                             >
-                                                {materialData.map((_, index) => (
+                                                {safeArray(materialData).map((_, index) => (
                                                     <Cell key={`cell-${index}`} fill={`url(#colorGrad-${index})`} style={{ filter: `drop-shadow(0px 4px 6px rgba(0, 0, 0, 0.1))` }} />
                                                 ))}
                                             </Pie>
@@ -542,7 +563,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ orders, measurements =
                                     <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Top Pedras Perdidas</p>
                                 </div>
                                 <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">
-                                    {topLostMaterials.length > 0 ? topLostMaterials.map((mat, i) => (
+                                    {topLostMaterials.length > 0 ? safeArray(topLostMaterials).map((mat, i) => (
                                         <div key={i} className="truncate">{i + 1}. {mat}</div>
                                     )) : <span className="text-slate-400 font-normal">Nenhum dado</span>}
                                 </div>
@@ -605,7 +626,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ orders, measurements =
                                                 dataKey="value"
                                                 paddingAngle={2}
                                             >
-                                                {declineReasonsChartData.map((_, index) => (
+                                                {safeArray(declineReasonsChartData).map((_, index) => (
                                                     <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                                                 ))}
                                             </Pie>
@@ -739,7 +760,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ orders, measurements =
                                 </tr>
                             </thead>
                             <tbody className="divide-y dark:divide-slate-800">
-                                {completedOrders.map((order) => (
+                                {safeArray(completedOrders).map((order) => (
                                     <tr key={order.id} className="hover:bg-slate-50 dark:hover:bg-slate-900/50">
                                         <td className="px-4 py-3">
                                             {order.completionDate && new Date(order.completionDate).toLocaleDateString()}
