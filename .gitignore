@@ -37,3 +37,7 @@ coverage/
 # Misc
 .gemini/
 .system_generated/
+
+# Local scratch / diagnostics
+scratch/
+scratch_*
