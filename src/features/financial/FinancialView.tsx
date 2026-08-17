@@ -25,15 +25,19 @@ import {
     validateBaixaAmount,
     buildFinancialEvent,
     buildCashflowForecast,
-    isValidFinancialOrder
+    isValidFinancialOrder,
+    calculateFinancialMetrics
 } from '../../utils/financialUtils';
-import type { ForecastItem } from '../../utils/financialUtils';
+import type { ForecastItem, FinancialMetrics } from '../../utils/financialUtils';
 import { 
     AlertCircle, 
     ArrowUpRight, 
     ArrowDownRight, 
     BarChart3, 
-    LayoutDashboard
+    LayoutDashboard,
+    AlertTriangle,
+    CalendarDays,
+    HelpCircle
 } from 'lucide-react';
 import { syncBonusWithFinancialEvent } from '../../lib/bonusService';
 import { removeUndefinedDeep } from '../contracts/ContractsView';
@@ -210,36 +214,6 @@ export const FinancialView: React.FC = () => {
             snapshot.forEach((docSnap) => { data.push({ id: docSnap.id, ...docSnap.data() } as Order); });
             setOrders(data);
             setLoading(false);
-
-            // --- AUDITORIA DE LIQUIDEZ ---
-            if (data.length > 0) {
-                // DEBUG TACYANE
-                const tacyane = data.find(o => o.customerName?.toUpperCase().includes('TACYANE'));
-                if (tacyane) {
-                    console.group('🔍 AUDITORIA: TACYANE');
-                    console.log('Dados crus:', tacyane);
-                    console.log('Balance:', getPendingBalance(tacyane));
-                    console.log('Received:', getRealReceivedAmount(tacyane));
-                    console.groupEnd();
-                }
-
-                const auditData = data
-                    .filter(o => isValidFinancialOrder(o))
-                    .map(o => ({
-                        Cliente: o.customerName || 'N/A',
-                        'ID': o.protocolNumber || o.id,
-                        'Status Ctr': o.contractStatus || 'N/A',
-                        'Status OS': o.status,
-                        'Contratado': Number(o.totalAmount || (o as any).totalContractValue || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }),
-                        'Recebido': getRealReceivedAmount(o).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }),
-                        'Origem': o.financialHistory?.length ? 'Histórico Real' : 'Sem Baixa',
-                        'Pendente': getPendingBalance(o).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
-                    }));
-                console.groupCollapsed('🔍 AUDITORIA: Radar de Liquidez');
-                console.table(auditData);
-                console.groupEnd();
-            }
-            // -----------------------------
         }, (err) => { console.error("Error fetching financial data:", err); setLoading(false); });
 
         const qContracts = query(collection(db, 'contratos'), where('companyId', '==', profile.companyId));
@@ -252,7 +226,8 @@ export const FinancialView: React.FC = () => {
         return () => { unsubscribe(); unsubscribeContracts(); };
     }, [profile?.companyId]);
 
-    const financialData = useMemo(() => {
+    // METRICAS FINANCEIRAS CENTRALIZADAS (Consolidated Service)
+    const metrics: FinancialMetrics = useMemo(() => {
         const { startDate: start, endDate: end } = getDateRange(
             selectedPeriod,
             customStartDate,
@@ -260,49 +235,18 @@ export const FinancialView: React.FC = () => {
             selectedMonth,
             selectedYear
         );
+        return calculateFinancialMetrics(orders, contracts, start, end);
+    }, [orders, contracts, selectedPeriod, customStartDate, customEndDate, selectedMonth, selectedYear]);
 
-        const validOrders = safeArray(orders).filter(o => isValidFinancialOrder(o));
-
-        const inPeriod = (dateStr: string) => {
-            const d = safeParseISO(dateStr);
-            return d && d >= start && d <= end;
-        };
-
-        // Regra 1: RECEBIDO (Somente eventos reais confirmados no histórico)
-        const received = safeArray(validOrders).reduce((acc, o) => {
-            if (safeArray(o.financialHistory).length > 0) {
-                const eventsInPeriod = getFinancialEventsInPeriod(o, start, end);
-                const sum = safeArray(eventsInPeriod).reduce((s, e) => {
-                    if (e.type === 'reversal') return s - (e.amount || 0);
-                    if (['income', 'payment', 'partial_payment', 'baixa_confirmada', 'received'].includes(e.type)) return s + (e.amount || 0);
-                    return s;
-                }, 0);
-                return acc + sum;
-            }
-            return acc;
-        }, 0);
-
-        // Regra 2: RECEBÍVEL (Saldo pendente de contratos ativos)
-        const activeStatuses = ['em_producao', 'em_instalacao', 'production', 'installation', 'ready_for_conference', 'aguardando_materia_prima'];
-        const toReceiveAtInstallation = safeArray(validOrders).reduce((acc, o) => {
-            const isActive = activeStatuses.includes(o.status);
-            const isNotPaid = o.paymentStatus !== 'paid';
-            
-            if (isActive && isNotPaid) {
-                const balance = getPendingBalance(o);
-                if (o.dueDate) {
-                    if (inPeriod(o.dueDate)) return acc + balance;
-                } else {
-                    return acc + balance;
-                }
-            }
-            return acc;
-        }, 0);
-
-        // Regra 3: MÉTODO MAIS UTILIZADO
-        const topMethod = getPreferredPaymentMethod(validOrders);
-
-        // Regra 4: VENDAS NO MÊS
+    // Lista de vendas detalhada para o Modal de Vendas
+    const salesList = useMemo(() => {
+        const { startDate: start, endDate: end } = getDateRange(
+            selectedPeriod,
+            customStartDate,
+            customEndDate,
+            selectedMonth,
+            selectedYear
+        );
         const validSalesStatuses = ['signed', 'assinado', 'approved', 'aprovado', 'em_producao', 'aguardando_materia_prima', 'instalado', 'finalizado'];
         const invalidSalesStatuses = ['rascunho', 'draft', 'pendente', 'cancelado', 'cancelled', 'deleted'];
 
@@ -313,7 +257,7 @@ export const FinancialView: React.FC = () => {
             return validSalesStatuses.includes(status);
         };
 
-        const getSaleDate = (item: any, isContract: boolean) => {
+        const getSaleDate = (item: any) => {
             const raw = item.signedAt || item.contractSignedAt || item.approvedAt || item.createdAt;
             return safeParseISO(raw);
         };
@@ -322,16 +266,16 @@ export const FinancialView: React.FC = () => {
             return Number(item.totalAmount || item.contractTotal || item.commercialTotal || item.finalTotal || item.total || 0);
         };
 
-        const salesList: any[] = [];
+        const list: any[] = [];
         const processedContractIds = new Set<string>();
-        
+
         safeArray(contracts).forEach(c => {
             if (isValidSale(c)) {
-                const date = getSaleDate(c, true);
+                const date = getSaleDate(c);
                 if (date && date >= start && date <= end) {
                     const amount = getSaleAmount(c);
                     if (amount > 0) {
-                        salesList.push({
+                        list.push({
                             id: c.id,
                             client: c.customerName || c.clientName || 'N/A',
                             protocol: c.protocolNumber || c.id,
@@ -349,11 +293,11 @@ export const FinancialView: React.FC = () => {
         safeArray(orders).forEach(o => {
             if (o.contractId && processedContractIds.has(o.contractId)) return;
             if (isValidSale(o)) {
-                const date = getSaleDate(o, false);
+                const date = getSaleDate(o);
                 if (date && date >= start && date <= end) {
                     const amount = getSaleAmount(o);
                     if (amount > 0) {
-                        salesList.push({
+                        list.push({
                             id: o.id,
                             client: o.customerName || o.clientName || 'N/A',
                             protocol: o.protocolNumber || o.id,
@@ -367,18 +311,8 @@ export const FinancialView: React.FC = () => {
             }
         });
 
-        salesList.sort((a, b) => b.date.getTime() - a.date.getTime());
-        const vendasNoMes = salesList.reduce((acc, s) => acc + s.amount, 0);
-        const qtdVendas = salesList.length;
-
-        return {
-            received,
-            toReceiveAtInstallation,
-            topMethod,
-            vendasNoMes,
-            qtdVendas,
-            salesList
-        };
+        list.sort((a, b) => b.date.getTime() - a.date.getTime());
+        return list;
     }, [orders, contracts, selectedPeriod, customStartDate, customEndDate, selectedMonth, selectedYear]);
 
     const forecastData = useMemo(() => {
@@ -409,7 +343,6 @@ export const FinancialView: React.FC = () => {
             return d && d >= start && d <= end;
         });
 
-        // KPIs Previsivos
         const toReceive = safeArray(filtered).reduce((acc, item) => acc + (item.status !== 'recebido' ? item.balance : 0), 0);
         const overdue = safeArray(filtered).reduce((acc, item) => acc + (item.status === 'atrasado' ? item.balance : 0), 0);
         const confirmed = safeArray(filtered).reduce((acc, item) => acc + item.received, 0);
@@ -420,7 +353,7 @@ export const FinancialView: React.FC = () => {
                 toReceive,
                 overdue,
                 confirmed,
-                netForecast: toReceive - (overdue * 0.2) // Heurística: 20% do atrasado é considerado perda/atraso longo
+                netForecast: Math.max(0, toReceive - (overdue * 0.2))
             }
         };
     }, [orders, selectedPeriod, customStartDate, customEndDate, selectedMonth, selectedYear]);
@@ -429,30 +362,32 @@ export const FinancialView: React.FC = () => {
         const today = new Date();
         const term = normalizeStr(searchTerm);
 
-            const mapped = orders
-                .filter(o => isValidFinancialOrder(o))
-                .map(o => {
-                    const balance = getPendingBalance(o);
-                    const received = getRealReceivedAmount(o);
-                    const due = o.dueDate ? safeParseISO(o.dueDate) : null;
-                    const overdueDays = due ? differenceInDays(today, due) : 0;
-                    const isOverdue = due && isBefore(due, today) && format(due, 'yyyy-MM-dd') !== format(today, 'yyyy-MM-dd');
-                    
-                    let derivedStatus = o.collectionStatus || 'pending';
-                    if (balance <= 0.01) {
-                        derivedStatus = 'paid';
-                    } else {
-                        if (derivedStatus === 'quitado' || derivedStatus === 'paid') {
-                            derivedStatus = received > 0 ? 'partial_payment_received' : 'pending';
-                        } else if (derivedStatus === 'pending' && received > 0) {
-                            derivedStatus = 'partial';
-                        }
+        const mapped = orders
+            .filter(o => isValidFinancialOrder(o))
+            .map(o => {
+                const balance = getPendingBalance(o);
+                const received = getRealReceivedAmount(o);
+                const due = o.dueDate ? safeParseISO(o.dueDate) : null;
+                const overdueDays = due ? differenceInDays(today, due) : 0;
+                const isOverdue = due && isBefore(due, today) && format(due, 'yyyy-MM-dd') !== format(today, 'yyyy-MM-dd');
+                
+                let derivedStatus = o.collectionStatus || 'pending';
+                if (balance <= 0.01) {
+                    derivedStatus = 'paid';
+                } else {
+                    if (derivedStatus === 'quitado' || derivedStatus === 'paid') {
+                        derivedStatus = received > 0 ? 'partial_payment_received' : 'pending';
+                    } else if (derivedStatus === 'pending' && received > 0) {
+                        derivedStatus = 'partial';
+                    } else if (isOverdue) {
+                        derivedStatus = 'charged';
                     }
-                    
-                    let searchScore = term ? calculateSearchScore(o.customerName || '', term) : 1;
-                    return { ...o, balance, received, isOverdue, overdueDays, derivedStatus, _searchScore: searchScore };
-                })
-                .filter(o => o._searchScore > 0);
+                }
+                
+                let searchScore = term ? calculateSearchScore(o.customerName || '', term) : 1;
+                return { ...o, balance, received, isOverdue, overdueDays, derivedStatus, _searchScore: searchScore };
+            })
+            .filter(o => o._searchScore > 0);
 
         const isOrderStatus = (st: string) => ['aguardando_materia_prima', 'em_producao', 'production', 'installation', 'em_instalacao', 'ready_for_conference', 'completed', 'finalizado'].includes(st);
 
@@ -463,340 +398,9 @@ export const FinancialView: React.FC = () => {
         return { activeOSData, pendingContractsData, liquidatedData };
     }, [orders, searchTerm]);
 
-    const formatCurrency = (val: number) => val.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+    const formatCurrency = (val: number) => (val || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
     const selectedOrder = useMemo(() => orders.find(o => o.id === selectedOrderId), [orders, selectedOrderId]);
-
-    const handleBillingStatusChange = async (order: any, newStatus: string) => {
-        try {
-            const balance = getPendingBalance(order);
-            const received = getRealReceivedAmount(order);
-            const orderRef = doc(db, 'pedidos', order.id);
-            const historyUpdate = arrayUnion({
-                action: `Status alterado para ${COLLECTION_STATUS_LABELS[newStatus as keyof typeof COLLECTION_STATUS_LABELS]}`,
-                timestamp: toISODateSafe(new Date())!,
-                userId: user?.uid
-            });
-
-            if (newStatus === 'paid' || newStatus === 'quitado') {
-                if (balance > 0) {
-                    const confirm = window.confirm(`Esse pedido ainda possui saldo pendente (${formatCurrency(balance)}). Deseja registrar a baixa total agora?`);
-                    if (!confirm) return; // cancela
-                    
-                    const newEventId = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-                    const methodLabel = PAYMENT_METHODS.find(m => m.value === (order.paymentConditions?.method || (order as any).paymentMethod || 'pix'))?.label || 'PIX';
-
-                    const updateFields = removeUndefinedDeep({
-                        collectionStatus: 'paid',
-                        paymentStatus: 'paid',
-                        billingStatus: 'paid',
-                        downPayment: received + balance,
-                        receivedAmount: received + balance,
-                        balance: 0,
-                        lastPaymentAt: toISODateSafe(new Date()),
-                        financialHistory: arrayUnion({
-                            id: newEventId,
-                            amount: balance,
-                            method: order.paymentConditions?.method || (order as any).paymentMethod || 'pix',
-                            methodLabel,
-                            paidAt: toISODateSafe(new Date()),
-                            note: 'Baixa automática (Quitação Integral) via alteração de status.',
-                            registeredAt: toISODateSafe(new Date()),
-                            registeredBy: user?.uid || 'unknown',
-                            type: 'payment',
-                            date: toISODateSafe(new Date()),
-                            paymentMethod: order.paymentConditions?.method || (order as any).paymentMethod || 'pix',
-                            notes: 'Baixa automática (Quitação Integral) via alteração de status.',
-                            createdAt: toISODateSafe(new Date()),
-                            userId: user?.uid || 'unknown',
-                            source: 'manual_baixa'
-                        }),
-                        collectionHistory: historyUpdate,
-                        paymentHistory: arrayUnion({
-                            amount: balance,
-                            method: order.paymentConditions?.method || (order as any).paymentMethod || 'pix',
-                            methodLabel,
-                            paidAt: toISODateSafe(new Date()),
-                            note: 'Baixa automática (Quitação Integral) via alteração de status.',
-                            registeredAt: toISODateSafe(new Date()),
-                            registeredBy: user?.uid || 'unknown'
-                        }),
-                        updatedAt: toISODateSafe(new Date()),
-                        updatedBy: user?.uid,
-                        updatedByName: profile?.name || user?.email
-                    });
-
-                    await updateDoc(orderRef, updateFields);
-
-                    if (profile?.companyId) {
-                        await syncBonusWithFinancialEvent(order.id, newEventId, profile.companyId);
-                    }
-                } else {
-                    const updateFields = removeUndefinedDeep({
-                        collectionStatus: 'paid',
-                        paymentStatus: 'paid',
-                        billingStatus: 'paid',
-                        receivedAmount: received,
-                        balance: 0,
-                        collectionHistory: historyUpdate,
-                        updatedAt: toISODateSafe(new Date()),
-                        updatedBy: user?.uid,
-                        updatedByName: profile?.name || user?.email
-                    });
-                    await updateDoc(orderRef, updateFields);
-                }
-            } else if (newStatus === 'pending') {
-                if (received > 0) {
-                    alert("Este pedido já possui recebimento registrado. Use Entrada Recebida / Parcial ou Quitado / Pago.");
-                    return;
-                }
-                const updateFields = removeUndefinedDeep({
-                    collectionStatus: newStatus,
-                    billingStatus: newStatus,
-                    receivedAmount: 0,
-                    balance: Number(order.totalAmount || 0),
-                    collectionHistory: historyUpdate,
-                    updatedAt: toISODateSafe(new Date()),
-                    updatedBy: user?.uid,
-                    updatedByName: profile?.name || user?.email
-                });
-                await updateDoc(orderRef, updateFields);
-            } else {
-                const updateFields = removeUndefinedDeep({
-                    collectionStatus: newStatus,
-                    billingStatus: newStatus,
-                    collectionHistory: historyUpdate,
-                    updatedAt: toISODateSafe(new Date()),
-                    updatedBy: user?.uid,
-                    updatedByName: profile?.name || user?.email
-                });
-                await updateDoc(orderRef, updateFields);
-            }
-        } catch (e) { 
-            console.error(e); 
-            alert('Erro ao atualizar status');
-        }
-    };
-
-    const confirmBaixa = async () => {
-        if (!selectedOrder) return;
-        
-        const numericAmount = Number(amountToPay) || 0;
-        const balance = getPendingBalance(selectedOrder);
-        
-        if (numericAmount <= 0) {
-            alert('O valor recebido precisa ser maior que 0.');
-            return;
-        }
-
-        if (numericAmount > balance + 0.01) {
-            alert('O valor informado é maior que o saldo pendente.');
-            return;
-        }
-
-        if (!payMethod) {
-            alert('Selecione uma forma de pagamento.');
-            return;
-        }
-
-        let receiptMetadata: any = null;
-
-        if (receiptFile) {
-            if (!profile?.companyId) {
-                alert('Erro: ID da empresa não encontrado no perfil do usuário.');
-                return;
-            }
-            setIsUploading(true);
-            try {
-                const timestamp = Date.now();
-                const storagePath = `companies/${profile.companyId}/orders/${selectedOrder.id}/payments/${timestamp}_${receiptFile.name}`;
-                const fileRef = ref(storage, storagePath);
-                
-                const uploadTask = uploadBytesResumable(fileRef, receiptFile);
-                
-                await new Promise<void>((resolve, reject) => {
-                    uploadTask.on('state_changed', 
-                        (snapshot) => {
-                            const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-                            setUploadProgress(progress);
-                        }, 
-                        (error) => {
-                            reject(error);
-                        }, 
-                        () => {
-                            resolve();
-                        }
-                    );
-                });
-
-                const downloadUrl = await getDownloadURL(fileRef);
-
-                receiptMetadata = {
-                    name: receiptFile.name,
-                    url: downloadUrl,
-                    type: receiptFile.type,
-                    size: receiptFile.size,
-                    storagePath: storagePath,
-                    uploadedAt: toISODateSafe(new Date())!,
-                    uploadedBy: user?.uid || 'unknown'
-                };
-            } catch (err: any) {
-                console.error('Erro no upload:', err);
-                alert('Erro ao fazer upload do comprovante.');
-                setIsUploading(false);
-                return;
-            }
-            setIsUploading(false);
-        }
-
-        try {
-            const orderRef = doc(db, 'pedidos', selectedOrder.id);
-            const currentReceived = getRealReceivedAmount(selectedOrder);
-            const newTotalReceived = Number((currentReceived + numericAmount).toFixed(2));
-            const totalContracted = Number(selectedOrder.totalAmount || 0);
-            
-            const computedBalance = Math.max(0, Number((totalContracted - newTotalReceived).toFixed(2)));
-            const isFullyPaid = computedBalance <= 0.01;
-            
-            const finalBalance = isFullyPaid ? 0 : computedBalance;
-            const finalReceived = isFullyPaid ? totalContracted : newTotalReceived;
-            const newStatus = isFullyPaid ? 'paid' : 'partial_payment_received';
-            
-            const newEventId = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-            const methodLabel = PAYMENT_METHODS.find(m => m.value === payMethod)?.label || payMethod;
-
-            const updateFields = removeUndefinedDeep({
-                paymentStatus: isFullyPaid ? 'paid' : 'partial',
-                downPayment: finalReceived, // Cache para compatibilidade
-                financialHistory: arrayUnion({
-                    id: newEventId,
-                    amount: numericAmount,
-                    method: payMethod,
-                    methodLabel,
-                    paidAt: toISODateSafe(paymentDate) || toISODateSafe(new Date()),
-                    note: paymentNote || '',
-                    receiptFile: receiptMetadata || null,
-                    registeredAt: toISODateSafe(new Date()),
-                    registeredBy: user?.uid || 'unknown',
-                    registeredByName: profile?.name || user?.email || 'Sistema',
-                    type: 'payment',
-                    date: toISODateSafe(paymentDate) || toISODateSafe(new Date()),
-                    paymentMethod: payMethod,
-                    notes: paymentNote || '',
-                    createdAt: toISODateSafe(new Date()),
-                    userId: user?.uid || 'unknown',
-                    source: 'manual_baixa'
-                }),
-                collectionStatus: newStatus,
-                billingStatus: newStatus,
-                receivedAmount: finalReceived,
-                balance: finalBalance,
-                lastPaymentAt: toISODateSafe(paymentDate) || toISODateSafe(new Date()),
-                paymentHistory: arrayUnion({
-                    amount: numericAmount,
-                    method: payMethod,
-                    methodLabel,
-                    paidAt: toISODateSafe(paymentDate) || toISODateSafe(new Date()),
-                    note: paymentNote || '',
-                    receiptFile: receiptMetadata || null,
-                    registeredAt: toISODateSafe(new Date()),
-                    registeredBy: user?.uid || 'unknown',
-                    registeredByName: profile?.name || user?.email || 'Sistema'
-                }),
-                updatedAt: toISODateSafe(new Date()),
-                updatedBy: user?.uid,
-                updatedByName: profile?.name || user?.email
-            });
-
-            await updateDoc(orderRef, updateFields);
-
-            // 4. Update Client Referral Status: pago (Rule #Parceiros)
-            if (isFullyPaid && selectedOrder.clientId) {
-                await updateDoc(doc(db, 'clients', selectedOrder.clientId), { 
-                    referralStatus: 'pago' 
-                });
-            }
-
-            // 3. Sync Bonus with Financial Event (Rule #Parceiros)
-            if (profile?.companyId) {
-                await syncBonusWithFinancialEvent(
-                    selectedOrder.id, 
-                    newEventId, 
-                    profile.companyId
-                );
-            }
-
-            setIsBaixaModalOpen(false);
-            setAmountToPay('');
-            setPaymentNote('');
-            setReceiptFile(null);
-            setUploadProgress(0);
-        } catch (e) { 
-            console.error(e); 
-            alert('Erro ao registrar baixa.');
-        }
-    };
-
-    const handleReversal = async (order: Order, eventId: string) => {
-        if (!window.confirm('Deseja realmente estornar este recebimento? Isso criará um lançamento negativo no histórico.')) return;
-        
-        try {
-            const event = safeArray(order.financialHistory).find(e => e.id === eventId);
-            if (!event) return;
-
-            const reversalEventId = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-            const reversalEvent = {
-                id: reversalEventId,
-                type: 'reversal',
-                amount: event.amount,
-                reason: `Estorno do lançamento ID: ${eventId.substring(0, 8)}`,
-                reversedAt: toISODateSafe(new Date())!,
-                reversedBy: user?.uid || 'unknown',
-                // Compatibility fields:
-                date: toISODateSafe(new Date())!,
-                paymentMethod: event.paymentMethod || 'pix',
-                notes: `Estorno do lançamento ID: ${eventId.substring(0, 8)}`,
-                createdAt: toISODateSafe(new Date())!,
-                userId: user?.uid || 'unknown',
-                source: 'adjustment',
-                referenceEventId: eventId
-            };
-
-            const newTotalReceived = Math.max(0, Number((getRealReceivedAmount(order) - event.amount).toFixed(2)));
-            const totalContracted = Number(order.totalAmount || 0);
-            const computedBalance = Math.max(0, Number((totalContracted - newTotalReceived).toFixed(2)));
-            
-            const isFullyPaid = computedBalance <= 0.01;
-            const finalBalance = isFullyPaid ? 0 : computedBalance;
-            const finalReceived = isFullyPaid ? totalContracted : newTotalReceived;
-            const newStatus = isFullyPaid ? 'paid' : (finalReceived > 0 ? 'partial_payment_received' : 'pending');
-
-            const orderRef = doc(db, 'pedidos', order.id);
-
-            const updateFields = removeUndefinedDeep({
-                financialHistory: arrayUnion(reversalEvent),
-                downPayment: finalReceived, // Compatibility
-                paymentStatus: finalReceived <= 0 ? 'pending' : 'partial',
-                collectionStatus: newStatus,
-                billingStatus: newStatus,
-                receivedAmount: finalReceived,
-                balance: finalBalance,
-                updatedAt: toISODateSafe(new Date()),
-                updatedBy: user?.uid,
-                updatedByName: profile?.name || user?.email
-            });
-
-            await updateDoc(orderRef, updateFields);
-
-            alert('Estorno realizado com sucesso.');
-        } catch (e) { 
-            console.error(e); 
-            alert('Erro ao realizar estorno.');
-        }
-    };
-    const toggleExpand = (id: string) => {
-        setExpandedOrderId(prev => prev === id ? null : id);
-    };
 
     const renderOrderTable = (title: string, data: any[], emptyMessage: string, icon: React.ReactNode) => (
         <div className="mb-8 border border-slate-100 dark:border-white/5 rounded-2xl overflow-hidden">
@@ -812,12 +416,11 @@ export const FinancialView: React.FC = () => {
                     <table className="w-full">
                         <thead>
                             <tr className="text-[9px] font-black text-slate-400 uppercase tracking-widest bg-white dark:bg-slate-900">
-                                <th className="px-6 py-4 text-left">Pedido / Protocolo</th>
-                                <th className="px-6 py-4 text-left">Fluxo</th>
-                                <th className="px-6 py-4 text-right">Contratado</th>
-                                <th className="px-6 py-4 text-right">Recebido</th>
-                                <th className="px-6 py-4 text-right">Saldo Pendente</th>
-                                <th className="px-6 py-4 text-center">Método Previsto</th>
+                                <th className="px-6 py-4 text-left">Cliente / Contrato</th>
+                                <th className="px-6 py-4 text-right">Valor Contratado</th>
+                                <th className="px-6 py-4 text-right">Total Recebido</th>
+                                <th className="px-6 py-4 text-right">Falta Receber</th>
+                                <th className="px-6 py-4 text-center">Próximo Vencimento</th>
                                 <th className="px-6 py-4 text-center">Status Cobrança</th>
                                 <th className="px-6 py-4 text-right">Ação</th>
                             </tr>
@@ -829,17 +432,15 @@ export const FinancialView: React.FC = () => {
                                         <td className="px-6 py-4">
                                             <div className="flex flex-col">
                                                 <span className="text-xs font-black text-slate-900 dark:text-white uppercase"><HighlightText text={order.customerName} term={searchTerm} /></span>
-                                                <span className="text-[9px] font-bold text-slate-400">RADAR # {order?.protocolNumber || '???'}</span>
-                                            </div>
-                                        </td>
-                                        <td className="px-6 py-4">
-                                            <div className="flex items-center gap-2">
-                                                <span className={cn(
-                                                    "px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-tighter",
-                                                    order.status === 'finalizado' ? "bg-emerald-100 text-emerald-600" : "bg-blue-100 text-blue-600"
-                                                )}>
-                                                    {order.status}
-                                                </span>
+                                                <div className="flex items-center gap-2 mt-0.5">
+                                                    <span className="text-[9px] font-bold text-slate-400">RADAR # {order?.protocolNumber || '???'}</span>
+                                                    <span className={cn(
+                                                        "px-1.5 py-0.2 rounded text-[7px] font-black uppercase tracking-tighter",
+                                                        order.status === 'finalizado' ? "bg-emerald-100 text-emerald-600" : "bg-blue-100 text-blue-600"
+                                                    )}>
+                                                        {order.status}
+                                                    </span>
+                                                </div>
                                             </div>
                                         </td>
                                         <td className="px-6 py-4 text-right">
@@ -852,8 +453,8 @@ export const FinancialView: React.FC = () => {
                                             <span className="text-xs font-black text-rose-500 tabular-nums">{formatCurrency(order.balance)}</span>
                                         </td>
                                         <td className="px-6 py-4 text-center">
-                                            <span className="text-[9px] font-black uppercase text-slate-400 bg-slate-100 dark:bg-white/5 px-2 py-1 rounded">
-                                                {order.paymentConditions?.method?.toUpperCase() || (order as any).paymentMethod?.toUpperCase() || 'A DEFINIR'}
+                                            <span className="text-[9px] font-black uppercase text-slate-600 dark:text-slate-300">
+                                                {order.dueDate ? formatVisualDate(order.dueDate) : 'SEM DATA'}
                                             </span>
                                         </td>
                                         <td className="px-6 py-4 text-center">
@@ -917,7 +518,7 @@ export const FinancialView: React.FC = () => {
                                     </tr>
                                     {expandedOrderId === order.id && (
                                         <tr className="bg-slate-50/50 dark:bg-white/5">
-                                            <td colSpan={8} className="px-8 py-6">
+                                            <td colSpan={7} className="px-8 py-6">
                                                 <div className="space-y-4">
                                                     <div className="flex items-center justify-between">
                                                         <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Histórico de Transações</h4>
@@ -1035,10 +636,10 @@ export const FinancialView: React.FC = () => {
                     <div>
                         <h1 className="text-2xl font-black text-slate-900 dark:text-white uppercase tracking-tight flex items-center gap-2">
                             {activeView === 'radar' ? <LayoutDashboard className="h-6 w-6 text-brand-emerald" /> : <BarChart3 className="h-6 w-6 text-brand-emerald" />}
-                            {activeView === 'radar' ? 'Radar de Liquidez' : 'Fluxo de Caixa'}
+                            {activeView === 'radar' ? 'Visão Financeira' : 'Fluxo de Caixa'}
                         </h1>
                         <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mt-1">
-                            {activeView === 'radar' ? 'Gestão de Recebimentos e Auditoria' : 'Projeção de Entradas e Análise de Crédito'}
+                            {activeView === 'radar' ? 'Gestão de Receitas e Radar de Cobrança' : 'Projeção de Entradas e Análise de Crédito'}
                         </p>
                     </div>
 
@@ -1050,7 +651,7 @@ export const FinancialView: React.FC = () => {
                                 activeView === 'radar' ? "bg-slate-900 text-white shadow-lg" : "text-slate-400 hover:text-slate-600"
                             )}
                         >
-                            Liquidez Real
+                            Gestão de Receitas
                         </button>
                         <button 
                             onClick={() => setActiveView('cashflow')}
@@ -1161,75 +762,80 @@ export const FinancialView: React.FC = () => {
                 </div>
             )}
 
-            {/* --- TOP KPIs --- */}
+            {/* --- TOP 5 MAIN KPI CARDS --- */}
             <div className={cn("grid gap-6", activeView === 'radar' ? "grid-cols-1 md:grid-cols-2 lg:grid-cols-5" : "grid-cols-1 md:grid-cols-4")}>
                 {activeView === 'radar' ? (
                     <>
-                        <div className="rocha-card bg-emerald-500 text-white border-none p-8 flex flex-col justify-between min-h-[160px] shadow-xl shadow-emerald-500/10">
+                        {/* CARD 1: DINHEIRO NO CAIXA */}
+                        <div className="rocha-card bg-emerald-500 text-white border-none p-6 flex flex-col justify-between min-h-[160px] shadow-xl shadow-emerald-500/10">
                             <div className="flex justify-between items-start">
-                                <span className="text-[11px] font-black uppercase tracking-widest text-white/80">Confirmado em Caixa</span>
-                                <CheckCircle2 className="h-5 w-5 text-white/50" />
+                                <span className="text-[11px] font-black uppercase tracking-widest text-white/90">Dinheiro no Caixa</span>
+                                <CheckCircle2 className="h-5 w-5 text-white/70" />
                             </div>
                             <div>
-                                <h2 className="text-3xl font-black tabular-nums">{formatCurrency(financialData.received)}</h2>
-                                <p className="text-[9px] font-bold text-white/60 uppercase mt-2">Sinais e quitações reais confirmadas</p>
+                                <h2 className="text-3xl font-black tabular-nums">{formatCurrency(metrics.totalReceived)}</h2>
+                                <p className="text-[9px] font-bold text-white/70 uppercase mt-2">Valores efetivamente recebidos no período</p>
                             </div>
                         </div>
 
-                        <div className="rocha-card bg-white dark:bg-slate-900 border-none p-8 flex flex-col justify-between min-h-[160px] shadow-sm">
+                        {/* CARD 2: FALTA RECEBER DOS CLIENTES */}
+                        <div className="rocha-card bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/5 p-6 flex flex-col justify-between min-h-[160px] shadow-sm">
                             <div className="flex justify-between items-start">
-                                <span className="text-[11px] font-black uppercase tracking-widest text-slate-400">Recebível na Instalação</span>
+                                <span className="text-[11px] font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">Falta Receber dos Clientes</span>
                                 <Wallet className="h-5 w-5 text-brand-emerald" />
                             </div>
                             <div>
-                                <h2 className="text-3xl font-black tabular-nums text-slate-900 dark:text-white">{formatCurrency(financialData.toReceiveAtInstallation)}</h2>
-                                <p className="text-[9px] font-bold text-slate-400 uppercase mt-2">Saldo de contratos ativos em fluxo</p>
+                                <h2 className="text-3xl font-black tabular-nums text-slate-900 dark:text-white">{formatCurrency(metrics.totalReceivable)}</h2>
+                                <p className="text-[9px] font-bold text-slate-400 uppercase mt-2">Carteira total pendente</p>
                             </div>
                         </div>
 
-                        <div className="rocha-card bg-white dark:bg-slate-900 border-none p-8 flex flex-col justify-between min-h-[160px] shadow-sm">
+                        {/* CARD 3: VENDAS NO PERÍODO */}
+                        <div 
+                            onClick={() => setIsSalesModalOpen(true)}
+                            className="rocha-card bg-indigo-600 text-white border-none p-6 flex flex-col justify-between min-h-[160px] shadow-xl shadow-indigo-500/10 cursor-pointer hover:bg-indigo-700 transition-colors"
+                        >
                             <div className="flex justify-between items-start">
-                                <span className="text-[11px] font-black uppercase tracking-widest text-slate-400">Método de Preferência</span>
-                                <CreditCard className="h-5 w-5 text-brand-emerald" />
+                                <span className="text-[11px] font-black uppercase tracking-widest text-white/90">Vendas no Período</span>
+                                <TrendingUp className="h-5 w-5 text-white/70" />
                             </div>
                             <div>
-                                <h2 className="text-3xl font-black text-slate-900 dark:text-white uppercase">{financialData.topMethod.name}</h2>
-                                <p className="text-[9px] font-bold text-emerald-500 uppercase mt-2">
-                                    Usado em {financialData.topMethod.percent.toFixed(0)}% das baixas reais
+                                <h2 className="text-3xl font-black tabular-nums">{formatCurrency(metrics.totalSold)}</h2>
+                                <p className="text-[9px] font-bold text-white/70 uppercase mt-2">
+                                    {metrics.salesCount} {metrics.salesCount === 1 ? 'venda contratada' : 'vendas contratadas'} no período
                                 </p>
                             </div>
                         </div>
 
-                        <div className="rocha-card bg-white dark:bg-slate-900 border-none p-8 flex flex-col justify-between min-h-[160px] shadow-sm">
+                        {/* CARD 4: EM ATRASO */}
+                        <div className="rocha-card bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/5 p-6 flex flex-col justify-between min-h-[160px] shadow-sm">
                             <div className="flex justify-between items-start">
-                                <span className="text-[11px] font-black uppercase tracking-widest text-slate-400">Alertas de Auditoria</span>
-                                <AlertCircle className="h-5 w-5 text-rose-500" />
+                                <span className="text-[11px] font-black uppercase tracking-widest text-rose-500">Em Atraso</span>
+                                <AlertTriangle className="h-5 w-5 text-rose-500" />
                             </div>
                             <div>
-                                <h2 className="text-3xl font-black text-slate-900 dark:text-white uppercase">{activeOSData.length + pendingContractsData.length}</h2>
-                                <p className="text-[9px] font-bold text-rose-500 uppercase mt-2">Baixas pendentes identificadas</p>
+                                <h2 className="text-3xl font-black tabular-nums text-rose-500">{formatCurrency(metrics.totalOverdue)}</h2>
+                                <p className="text-[9px] font-bold text-rose-400 uppercase mt-2">
+                                    {metrics.overdueCount} {metrics.overdueCount === 1 ? 'cobrança vencida' : 'cobranças vencidas'}
+                                </p>
                             </div>
                         </div>
 
-                        <div 
-                            onClick={() => setIsSalesModalOpen(true)}
-                            className="rocha-card bg-indigo-500 text-white border-none p-8 flex flex-col justify-between min-h-[160px] shadow-xl shadow-indigo-500/10 cursor-pointer hover:bg-indigo-600 transition-colors"
-                        >
+                        {/* CARD 5: A RECEBER FUTURAMENTE */}
+                        <div className="rocha-card bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/5 p-6 flex flex-col justify-between min-h-[160px] shadow-sm">
                             <div className="flex justify-between items-start">
-                                <span className="text-[11px] font-black uppercase tracking-widest text-white/80">
-                                    {selectedPeriod === 'month' || selectedPeriod === 'byMonth' ? 'Vendas no Mês' : 'Vendas no Período'}
-                                </span>
-                                <TrendingUp className="h-5 w-5 text-white/50" />
+                                <span className="text-[11px] font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">A Receber Futuramente</span>
+                                <CalendarDays className="h-5 w-5 text-blue-500" />
                             </div>
                             <div>
-                                <h2 className="text-3xl font-black tabular-nums">{formatCurrency(financialData.vendasNoMes)}</h2>
-                                <p className="text-[9px] font-bold text-white/60 uppercase mt-2">{financialData.qtdVendas} {financialData.qtdVendas === 1 ? 'venda' : 'vendas'} {selectedPeriod === 'month' || selectedPeriod === 'byMonth' ? 'neste mês' : 'neste período'}</p>
+                                <h2 className="text-3xl font-black tabular-nums text-slate-900 dark:text-white">{formatCurrency(metrics.totalFutureReceivable)}</h2>
+                                <p className="text-[9px] font-bold text-slate-400 uppercase mt-2">Saldos com vencimento futuro</p>
                             </div>
                         </div>
                         </>
                 ) : (
                     <>
-                        <div className="rocha-card bg-blue-600 text-white border-none p-8 flex flex-col justify-between min-h-[160px] shadow-xl shadow-blue-500/10">
+                        <div className="rocha-card bg-blue-600 text-white border-none p-6 flex flex-col justify-between min-h-[160px] shadow-xl shadow-blue-500/10">
                             <div className="flex justify-between items-start">
                                 <span className="text-[11px] font-black uppercase tracking-widest text-white/80">A Receber no Período</span>
                                 <ArrowUpRight className="h-5 w-5 text-white/50" />
@@ -1240,7 +846,7 @@ export const FinancialView: React.FC = () => {
                             </div>
                         </div>
 
-                        <div className="rocha-card bg-white dark:bg-slate-900 border-none p-8 flex flex-col justify-between min-h-[160px] shadow-sm">
+                        <div className="rocha-card bg-white dark:bg-slate-900 border-none p-6 flex flex-col justify-between min-h-[160px] shadow-sm">
                             <div className="flex justify-between items-start">
                                 <span className="text-[11px] font-black uppercase tracking-widest text-slate-400">Vencido / Atrasado</span>
                                 <ArrowDownRight className="h-5 w-5 text-rose-500" />
@@ -1251,7 +857,7 @@ export const FinancialView: React.FC = () => {
                             </div>
                         </div>
 
-                        <div className="rocha-card bg-white dark:bg-slate-900 border-none p-8 flex flex-col justify-between min-h-[160px] shadow-sm">
+                        <div className="rocha-card bg-white dark:bg-slate-900 border-none p-6 flex flex-col justify-between min-h-[160px] shadow-sm">
                             <div className="flex justify-between items-start">
                                 <span className="text-[11px] font-black uppercase tracking-widest text-slate-400">Recebido no Fluxo</span>
                                 <CheckCircle2 className="h-5 w-5 text-emerald-500" />
@@ -1262,7 +868,7 @@ export const FinancialView: React.FC = () => {
                             </div>
                         </div>
 
-                        <div className="rocha-card bg-slate-900 text-white border-none p-8 flex flex-col justify-between min-h-[160px] shadow-xl">
+                        <div className="rocha-card bg-slate-900 text-white border-none p-6 flex flex-col justify-between min-h-[160px] shadow-xl">
                             <div className="flex justify-between items-start">
                                 <span className="text-[11px] font-black uppercase tracking-widest text-white/50">Previsão Líquida</span>
                                 <TrendingUp className="h-5 w-5 text-brand-emerald" />
@@ -1275,6 +881,50 @@ export const FinancialView: React.FC = () => {
                     </>
                 )}
             </div>
+
+            {/* --- SECUNDARY INDICATORS BAR --- */}
+            {activeView === 'radar' && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="glass-card flex items-center justify-between p-4 rounded-xl border border-slate-200/60 dark:border-white/5 bg-white dark:bg-slate-900 shadow-sm">
+                        <div className="flex items-center gap-3">
+                            <div className="p-2.5 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 rounded-lg">
+                                <HelpCircle className="h-5 w-5" />
+                            </div>
+                            <div>
+                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Sem Data Definida</p>
+                                <p className="text-[9px] text-slate-400">Saldos pendentes sem vencimento cadastrado</p>
+                            </div>
+                        </div>
+                        <span className="text-sm font-black text-slate-800 dark:text-slate-200 tabular-nums">{formatCurrency(metrics.totalWithoutDueDate)}</span>
+                    </div>
+
+                    <div className="glass-card flex items-center justify-between p-4 rounded-xl border border-slate-200/60 dark:border-white/5 bg-white dark:bg-slate-900 shadow-sm">
+                        <div className="flex items-center gap-3">
+                            <div className="p-2.5 bg-teal-50 dark:bg-teal-900/20 text-teal-600 dark:text-teal-400 rounded-lg">
+                                <Wallet className="h-5 w-5" />
+                            </div>
+                            <div>
+                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">A Receber na Instalação</p>
+                                <p className="text-[9px] text-slate-400">Parte do saldo pendente prevista para a instalação</p>
+                            </div>
+                        </div>
+                        <span className="text-sm font-black text-teal-600 dark:text-teal-400 tabular-nums">{formatCurrency(metrics.receivableAtInstallation)}</span>
+                    </div>
+
+                    <div className="glass-card flex items-center justify-between p-4 rounded-xl border border-slate-200/60 dark:border-white/5 bg-white dark:bg-slate-900 shadow-sm">
+                        <div className="flex items-center gap-3">
+                            <div className="p-2.5 bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 rounded-lg">
+                                <AlertCircle className="h-5 w-5" />
+                            </div>
+                            <div>
+                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Alertas Operacionais</p>
+                                <p className="text-[9px] text-slate-400">O.S. e contratos com baixas pendentes</p>
+                            </div>
+                        </div>
+                        <span className="text-sm font-black text-amber-600 dark:text-amber-400 tabular-nums">{activeOSData.length + pendingContractsData.length}</span>
+                    </div>
+                </div>
+            )}
 
             {/* --- LISTAGEM --- */}
             <div className="rocha-panel bg-white dark:bg-slate-900 border-none shadow-sm rounded-3xl overflow-hidden flex-1 p-6">

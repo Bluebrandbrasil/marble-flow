@@ -79,7 +79,7 @@ export const getSafeDate = (val: any): Date | null => {
 export const getDateKeyInTimezone = (value: any, timezone: string = "America/Sao_Paulo"): string | null => {
     const d = safeParseISO(value);
     if (!d) {
-        if (import.meta.env.DEV && value) {
+        if ((import.meta as any)?.env?.DEV && value) {
             console.warn("Data inválida na Inteligência Comercial:", value);
         }
         return null;
@@ -93,7 +93,7 @@ export const getDateKeyInTimezone = (value: any, timezone: string = "America/Sao
         });
         return formatter.format(d);
     } catch (e) {
-        if (import.meta.env.DEV) {
+        if ((import.meta as any)?.env?.DEV) {
             console.warn("Erro ao formatar data na Inteligência Comercial:", value, e);
         }
         return null;
